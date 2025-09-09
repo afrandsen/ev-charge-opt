@@ -826,8 +826,6 @@ def send_email_notification(subject: str, body: str, sender: str, recipient: str
     except Exception as e:
         print(f"⚠️ Failed to send email: {e}")
 
-notify=True
-
 if notify:
     save_last_amp(current_amp)
 
