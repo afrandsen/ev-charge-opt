@@ -789,6 +789,8 @@ def should_notify(current_amp: int, last_amp: int):
 
     return False, "No change"
 
+from datetime import time
+
 QUIET_START = time(0, 0)    # 00:00
 QUIET_END   = time(6, 45)   # 06:45
 
