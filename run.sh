@@ -8,5 +8,7 @@ SOC=$(docker exec teslamate-database-1 \
 
 echo "SOC fetched: $SOC"
 
+source ~/repos/ev-charge-opt/venv/bin/activate
+
 # Call ev-charge-opt.py with the fetched SOC
 python3 ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC"
