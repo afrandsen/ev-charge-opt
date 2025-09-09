@@ -47,7 +47,7 @@ except ValueError:
     print("SOC is not a valid number!")
     sys.exit(1)
 
-print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}%")
+print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}")
 
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
 SOC_MAX_PCT = float(os.getenv("SOC_MAX_PCT"))
