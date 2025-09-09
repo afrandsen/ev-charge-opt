@@ -39,7 +39,12 @@ if len(sys.argv) < 2:
     print("No SOC provided!")
     sys.exit(1)
 
-INITIAL_SOC_PCT = sys.argv[1]
+try:
+    INITIAL_SOC_PCT = float(sys.argv[1])  # or int(sys.argv[1]) if you only need whole %
+except ValueError:
+    print("SOC is not a valid number!")
+    sys.exit(1)
+
 print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}%")
 
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
