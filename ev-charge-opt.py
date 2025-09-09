@@ -800,7 +800,6 @@ def in_quiet_hours(now: pd.Timestamp) -> bool:
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
 current_row = df_out.iloc[0]
 current_amp = int(current_row["amp"])
-save_last_amp(current_amp)
 
 last_amp = load_last_amp()
 notify, reason = should_notify(current_amp, last_amp)
