@@ -46,7 +46,7 @@ except ValueError:
     sys.exit(1)
 
 print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}%")
-
+INITIAL_SOC_PCT=0.5
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
 SOC_MAX_PCT = float(os.getenv("SOC_MAX_PCT"))
 LAT = float(os.getenv("LAT"))
