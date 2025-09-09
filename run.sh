@@ -11,4 +11,4 @@ echo "SOC fetched: $SOC"
 source ~/repos/ev-charge-opt/venv/bin/activate
 
 # Call ev-charge-opt.py with the fetched SOC
-~/repos/ev-charge-opt/venv/bin/python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC"
+python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC"
