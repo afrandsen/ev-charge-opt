@@ -32,7 +32,7 @@ REFUSION = 0.5
 TILT = 25
 AZIMUTH = 0
 CHARGE_EFF = 0.95
-TZ = "Europe/Copenhagen"
+tz = "Europe/Copenhagen"
 
 # --- Environment Variables ---
 if len(sys.argv) < 2:
@@ -58,84 +58,78 @@ wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
 
-# --- Utility Functions ---
-
-def _fetch_open_meteo_with_retries(
-    url: str,
-    value_path: list,
-    attempts: int = 3,
-    sleep_sec: int = 2
-) -> tuple:
-    """
-    Fetch Open-Meteo JSON and pull a numeric array at value_path (list of keys).
-    Retries up to `attempts` times. Returns (times, values) or (None, None) on failure.
-    """
+def _fetch_open_meteo_with_retries(url, value_path, attempts=3, sleep_sec=2):
+    """Fetch Open-Meteo JSON and pull a numeric array at value_path (list of keys).
+       Retries like the Nordpool logic. Returns (times, values) or (None, None) on total failure."""
     for attempt in range(1, attempts + 1):
         try:
             r = requests.get(url, timeout=30)
             r.raise_for_status()
             j = r.json()
+
+            # Walk nested keys (e.g., ["minutely_15", "global_tilted_irradiance_instant"])
             node = j
             for k in value_path[:-1]:
                 node = node[k]
             values = node[value_path[-1]]
-            time_key = value_path[0]
+
+            # Get corresponding time array living alongside the values
+            # For minutely_15 → j["minutely_15"]["time"]
+            # For hourly      → j["hourly"]["time"]
+            time_key = value_path[0]  # "minutely_15" or "hourly"
             times = j[time_key]["time"]
+
             if values is None or len(values) == 0:
                 raise ValueError("Empty values from Open-Meteo")
+
             print(f"✅ Open-Meteo success for {time_key} on attempt {attempt}")
             return times, values
+
         except Exception as e:
             print(f"Open-Meteo fetch failed (attempt {attempt}/{attempts}): {e}")
             time.sleep(sleep_sec)
+
     print("⚠️ Open-Meteo total failure for URL:", url)
     return None, None
 
-def _align_gti_to_quarters(
-    times: list,
-    values: list,
-    tz: str,
-    repeat_to_quarters: bool = False
-) -> pd.Series:
-    """
-    Return quarter-resolution Series aligned to given times.
-    If repeat_to_quarters=True (hourly input), repeat each hour 4×.
-    """
+def _align_gti_to_quarters(times, values, tz, repeat_to_quarters=False):
+    """Return quarter-resolution Series aligned to given times.
+       If repeat_to_quarters=True (hourly input), repeat each hour 4×."""
     ts = pd.to_datetime(times).tz_localize(tz)
     arr = np.array(values, dtype=float)
+
     if repeat_to_quarters:
         ts_q = ts.repeat(4) + pd.to_timedelta(np.tile([0, 15, 30, 45], len(ts)), unit="m")
         arr_q = arr.repeat(4)
     else:
         ts_q = ts
         arr_q = arr
+
     return pd.Series(arr_q, index=ts_q)
 
-def override_with_inverter(
-    df: pd.DataFrame,
-    tz: str,
-    token_id: str,
-    wifi_sn: str,
-    attempts: int = 3,
-    sleep_sec: int = 2
-) -> pd.DataFrame:
+def override_with_inverter(df, tz, token_id, wifi_sn, attempts=3, sleep_sec=2):
     """
     Try to override current 15-min slot with inverter data (SolaxCloud).
-    Retries up to `attempts` times. Returns the modified DataFrame.
+    Retries up to `attempts` times with sleep between.
+    Returns the modified DataFrame.
     """
     url = "https://global.solaxcloud.com/api/v2/dataAccess/realtimeInfo/get"
     headers = {"tokenId": token_id, "Content-Type": "application/json"}
     payload = {"wifiSn": wifi_sn}
+
     for attempt in range(1, attempts + 1):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=15)
             response.raise_for_status()
             data = response.json()
+
             if data.get("success") and "acpower" in data.get("result", {}):
                 ac_power_w = float(data["result"]["acpower"])
                 solar_kwh_now = ac_power_w / 1000.0 * 0.25
+
                 now_slot = pd.Timestamp.now(tz=tz).floor("15min")
                 mask = df["datetime_local"] == now_slot
+
                 if mask.any():
                     old_val = df.loc[mask, "solar_energy"].values[0]
                     df.loc[mask, "solar_energy"] = solar_kwh_now
@@ -145,78 +139,91 @@ def override_with_inverter(
                     )
                 else:
                     print(f"⚠️ Current slot {now_slot} not in df timeline")
-                return df
+                return df  # success → return early
+
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
+
         except Exception as e:
             print(f"⚠️ Inverter fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
+
     print("⚠️ Inverter override failed after all retries")
     return df
 
-def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
-    """
-    Fetches DK1 spot prices from Nordpool (today and, if available, tomorrow).
-    Returns DataFrame with columns: date, price, source.
-    """
+def fetch_dk1_prices_dkk(attempts=3):
     today = datetime.now().date()
-    now_cet = pd.Timestamp.now(tz=TZ)
+
+    # check if Nordpool day-ahead is published (12:45 CET / 11:45 UTC)
+    now_cet = pd.Timestamp.now(tz="Europe/Copenhagen")
     fetch_tomorrow = now_cet.hour > 12 or (now_cet.hour == 12 and now_cet.minute >= 45)
-    print(
-        f"{'🟢' if fetch_tomorrow else '🟡'} It is {now_cet.strftime('%H:%M %Z')} → "
-        f"{'Nordpool tomorrow data should be available.' if fetch_tomorrow else 'Too early, skipping tomorrow fetch.'}"
-    )
+
+    if fetch_tomorrow:
+        print(f"🟢 It is {now_cet.strftime('%H:%M %Z')} → Nordpool tomorrow data should be available.")
+    else:
+        print(f"🟡 It is {now_cet.strftime('%H:%M %Z')} → Too early, skipping tomorrow fetch.")
+
     try:
         from nordpool import elspot
         p = elspot.Prices(currency="DKK")
+
         dfs = []
-        for offset in range(1 + int(fetch_tomorrow)):
+        # always fetch today
+        for offset in range(1 + int(fetch_tomorrow)):  
             date_str = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+
             rows = None
             for attempt in range(attempts):
                 try:
                     data = p.hourly(end_date=date_str, areas=["DK1"])
                     values = data["areas"]["DK1"]["values"]
-                    rows = [
-                        {
+                    rows = []
+                    for v in values:
+                        if v["value"] is None:
+                            continue
+                        rows.append({
                             "date": pd.to_datetime(v["start"], utc=True),
-                            "price": (v["value"] / 10.0) * 1.25,
+                            "price": (v["value"] / 10.0) * 1.25,  # DKK/kWh incl moms
                             "source": "Nordpool"
-                        }
-                        for v in values if v["value"] is not None
-                    ]
+                        })
                     print(f"✅ Nordpool success for {date_str} on attempt {attempt+1}")
                     break
                 except Exception as e:
                     print(f"Nordpool fetch failed {date_str} (attempt {attempt+1}/{attempts}): {e}")
                     time.sleep(2)
+
             if rows is not None:
                 dfs.append(pd.DataFrame(rows))
             else:
                 print(f"⚠️ Nordpool prices not yet available for {date_str}, skipping")
+
         if not dfs:
             raise RuntimeError("No Nordpool data available at all")
+
         df = pd.concat(dfs, ignore_index=True)
         return df.sort_values("date").reset_index(drop=True)
+
     except Exception as e:
         raise RuntimeError(f"Nordpool failed after retries: {e}")
 
+prices_actual = fetch_dk1_prices_dkk()
+
 def fetch_github_forecast_dkk(
-    github_url: str = "https://raw.githubusercontent.com/solmoller/Spotprisprognose/refs/heads/main/DK1.json",
-    attempts: int = 3,
-    sleep_sec: int = 2
-) -> pd.DataFrame:
-    """
-    Fetches DK1 spot price forecast from GitHub.
-    Returns DataFrame with columns: date, price, source.
-    """
+    github_url="https://raw.githubusercontent.com/solmoller/Spotprisprognose/refs/heads/main/DK1.json",
+    attempts=3,
+    sleep_sec=2
+):
+    import pandas as pd, requests, time
+
     df_github = None
+
+    # --- 1) Try GitHub JSON ---
     for attempt in range(1, attempts + 1):
         try:
             r = requests.get(github_url, timeout=30)
             r.raise_for_status()
-            j = r.json()
+            j = r.json()  # dict {timestamp: price}
             df_github = pd.DataFrame(list(j.items()), columns=["date", "price"])
             df_github["date"] = pd.to_datetime(df_github["date"], utc=True)
             df_github["source"] = "GitHub"
@@ -226,20 +233,19 @@ def fetch_github_forecast_dkk(
             print(f"⚠️ GitHub forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
+
     return df_github[["date", "price", "source"]]
 
 def fetch_carnot_forecast_dkk(
-    carnot_url: str = "https://openapi.carnot.dk/openapi/get_predict",
-    apikey: str = "YOUR_API_KEY",
-    username: str = "YOUR_USERNAME",
-    daysahead: int = 3,
-    attempts: int = 3,
-    sleep_sec: int = 2
-) -> pd.DataFrame:
-    """
-    Fetches DK1 spot price forecast from Carnot API.
-    Returns DataFrame with columns: date, price, source.
-    """
+    carnot_url="https://openapi.carnot.dk/openapi/get_predict",
+    apikey="YOUR_API_KEY",
+    username="YOUR_USERNAME",
+    daysahead=3,
+    attempts=3,
+    sleep_sec=2
+):
+    import pandas as pd, requests, time
+
     df_carnot = None
     for attempt in range(1, attempts + 1):
         try:
@@ -254,6 +260,7 @@ def fetch_carnot_forecast_dkk(
             data = r.json()
             df_carnot = pd.DataFrame(data["predictions"])
             df_carnot["date"] = pd.to_datetime(df_carnot["utctime"], utc=True)
+            # Convert prediction → DKK/kWh (øre/MWh → DKK/kWh w/ moms)
             df_carnot["price"] = df_carnot["prediction"] / 10.0 * 1.25
             df_carnot["source"] = "Carnot"
             df_carnot = df_carnot[["date", "price", "source"]]
@@ -263,90 +270,92 @@ def fetch_carnot_forecast_dkk(
             print(f"⚠️ Carnot forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
+
     return df_carnot[["date", "price", "source"]]
 
-def fetch_combined_forecast(
-    source: str = "combined",
-    apikey: str = "YOUR_API_KEY",
-    username: str = "YOUR_USERNAME"
-) -> pd.DataFrame:
+def fetch_combined_forecast(source="combined", apikey="YOUR_API_KEY", username="YOUR_USERNAME"):
     """
     Fetch price forecast(s) depending on selected source.
-    - "github": only Github spot price forecast
-    - "carnot": only Carnot forecast
-    - "combined": Github prioritized, Carnot appended (default)
+    
+    source:
+        "github"   → only Github spot price forecast
+        "carnot"   → only Carnot forecast
+        "combined" → Github prioritized, Carnot appended (default)
     """
     if source == "github":
         forecast = fetch_github_forecast_dkk()
         print("🔮 Using Github forecast only")
+
     elif source == "carnot":
         forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
         print("🔮 Using Carnot forecast only")
+
     elif source == "combined":
         github = fetch_github_forecast_dkk()
         carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
+
         last_github = github["date"].max()
         future_carnot = carnot[carnot["date"] > last_github]
+
         forecast = pd.concat([github, future_carnot], ignore_index=True).sort_values("date").reset_index(drop=True)
         print("🔮 Using Github forecast (prioritized), Carnot appended")
+
     else:
         raise ValueError(f"Invalid forecast source: {source}")
+
     return forecast.reset_index(drop=True)
 
-def combine_actuals_and_forecast(
-    prices_actual: pd.DataFrame,
-    prices_forecast: pd.DataFrame,
-    tz: str = TZ
-) -> pd.DataFrame:
-    """
-    Combines actual and forecasted prices, filtering from current hour and forward.
-    """
+prices_forecast = fetch_combined_forecast(source="combined", apikey=carnot_apikey, username=carnot_username)
+
+def combine_actuals_and_forecast(prices_actual, prices_forecast, tz="Europe/Copenhagen"):
     last_actual = prices_actual["date"].max()
     future = prices_forecast[prices_forecast["date"] > last_actual]
+
     df = pd.concat([prices_actual, future], ignore_index=True).sort_values("date").reset_index(drop=True)
+
+    # Alternativ now = pd.Timestamp.now(tz=tz).floor("h")
     now = pd.Timestamp.now(tz="UTC").floor("15min") - timedelta(hours=2)
+
+    # filter from current hour and forward
     df = df[df["date"] >= now]
+
     return df.reset_index(drop=True)
 
-# --- Data Fetching ---
-prices_actual = fetch_dk1_prices_dkk()
-prices_forecast = fetch_combined_forecast(source="combined", apikey=carnot_apikey, username=carnot_username)
-prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz=TZ)
+prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz="Europe/Copenhagen")
+
 prices = prices.sort_values("date").reset_index(drop=True)
 
-# --- Main Optimization Function ---
-
 def optimize_ev_charging(
-    trips: pd.DataFrame,
-    prices: pd.DataFrame,
-    battery_kwh: float = BATTERY_KWH,
-    soc_min_pct: float = SOC_MIN_PCT,
-    soc_max_pct: float = SOC_MAX_PCT,
-    charger_kw: float = CHARGER_KW,
-    charger_min_a: float = CHARGER_MIN_A,
-    charger_volt: float = CHARGER_VOLT,
-    phases: int = PHASES,
-    eff_kwh_per_km: float = EFF_KWH_PER_KM,
-    initial_soc_pct: float = INITIAL_SOC_PCT,
-    solar_eff: float = SOLAR_EFF,
-    panel_area: float = PANEL_AREA,
-    panel_eff: float = PANEL_EFF,
-    systemtarif: float = SYSTEMTARIF,
-    nettarif_tso: float = NETTARIF_TSO,
-    elafgift: float = ELAFGIFT,
-    looad_tillaeg: float = LOOAD_TILLAEG,
-    lat: float = LAT,
-    lon: float = LON,
-    tilt: float = TILT,
-    azimuth: float = AZIMUTH,
-    tz: str = TZ,
-    charge_eff: float = CHARGE_EFF,
-    refusion: float = REFUSION
-) -> pd.DataFrame:
-    """
-    Optimize EV charging schedule given trips, prices, and system parameters.
-    Returns DataFrame with optimal schedule and cost breakdown.
-    """
+    trips,                 # DataFrame: columns ["day", "away_start", "away_end", "distance_km", "trip_kwh"]
+    prices,                # DataFrame: columns ["date", "price"] (price in øre/kWh)
+    battery_kwh=75,
+    soc_min_pct=0.30,
+    soc_max_pct=0.80,
+    charger_kw=11,
+    charger_min_a=6,
+    charger_volt=400,
+    phases=3,
+    eff_kwh_per_km=0.128,
+    initial_soc_pct=0.78,
+    solar_eff=0.95,
+    panel_area=11.5,
+    panel_eff=0.2046,
+    systemtarif=0.09250,
+    nettarif_tso=0.07625,
+    elafgift=0.40000,
+    looad_tillaeg=0.08000,
+    lat=0,
+    lon=0,
+    tilt=25,
+    azimuth=0,
+    tz="Europe/Copenhagen",
+    charge_eff=0.95,
+    refusion=0.5
+):
+    import numpy as np, pandas as pd, math, pulp, requests
+    from pytz import timezone
+    from pandas.api.types import is_datetime64_any_dtype
+
     # --- Prices preprocessing ---
     assert {"date", "price"}.issubset(prices.columns)
     if not is_datetime64_any_dtype(prices["date"]):
@@ -577,6 +586,8 @@ def optimize_ev_charging(
 
     return df_out
 
+
+
 df_out = optimize_ev_charging(
     trips,
     prices,
@@ -586,7 +597,7 @@ df_out = optimize_ev_charging(
     SOLAR_EFF, PANEL_AREA, PANEL_EFF,
     SYSTEMTARIF, NETTARIF_TSO, ELAFGIFT, LOOAD_TILLAEG,
     LAT, LON, TILT, AZIMUTH,
-    TZ,
+    tz,
     CHARGE_EFF,
     REFUSION
 )
@@ -630,7 +641,7 @@ print("\n=== Optimal Charging & Trip Events (15-min) ===")
 header = (
     f"{'datetime_local':<16} | {'weekday':<9} | {'hour':<2} | {'minute':<2} | {'irradiance':<10} | "
     f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'eff_price_kr_ref/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
-    f"{'amp':>3} | {'trip_kWh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
+    f"{'amp':>3} | {'trip_kWh':>8} | {'soc_kWh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
 )
 print(header)
 print("-" * len(header))
