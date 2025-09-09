@@ -1,0 +1,7 @@
+python-dotenv
+requests
+numpy
+pandas
+pulp
+pytz
+nordpool
