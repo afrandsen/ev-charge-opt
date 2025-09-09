@@ -803,3 +803,56 @@ current_amp = int(current_row["amp"])
 
 last_amp = load_last_amp()
 notify, reason = should_notify(current_amp, last_amp)
+
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# --- Email Notification ---
+def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
+    msg = MIMEMultipart()
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()  # secure connection
+            server.login(username, password)
+            server.sendmail(sender, recipient, msg.as_string())
+        print("📧 Email notification sent.")
+    except Exception as e:
+        print(f"⚠️ Failed to send email: {e}")
+
+notify=True
+
+if notify:
+    save_last_amp(current_amp)
+
+    if in_quiet_hours(now_slot):
+        print(f"🌙 Quiet hours ({now_slot.time()}), no email sent ({reason})")
+    else:
+        subject = f"EV Charging Alert: {current_amp}A at {now_slot.strftime('%H:%M')}"
+        body = (
+            f"{reason} at {now_slot}.\n\n"
+            f"Amps: {current_amp}\n"
+            f"Grid: {current_row['grid_charge_kwh']:.2f} kWh\n"
+            f"Solar: {current_row['solar_charge_kwh']:.2f} kWh\n"
+            f"SoC before: {current_row['soc_pct_before']:.1f}%\n"
+            f"SoC after:  {current_row['soc_pct_after']:.1f}%\n"
+        )
+
+        send_email_notification(
+            subject=subject,
+            body=body,
+            sender=os.getenv("EMAIL_SENDER"),
+            recipient=os.getenv("EMAIL_RECIPIENT"),
+            smtp_server=os.getenv("SMTP_SERVER"),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            username=os.getenv("SMTP_USER"),
+            password=os.getenv("SMTP_PASS"),
+        )
+else:
+    print(f"ℹ️ No email sent ({reason})")
