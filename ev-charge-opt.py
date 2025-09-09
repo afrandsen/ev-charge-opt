@@ -753,3 +753,52 @@ print(
     f"Avg cost: {avg_cost_per_kWh_drawn:.2f} kr/kWh drawn, {avg_cost_per_kWh_stored:.2f} kr/kWh stored. "
     f"Eff. avg: {avg_eff_per_kWh_drawn:.2f} (drawn), {avg_eff_per_kWh_stored:.2f} (stored)."
 )
+
+# --- Notification Logic ---
+# Use ~/repos/ev-charge-opt/tmp
+STATE_FILE = os.path.expanduser("~/repos/ev-charge-opt/tmp/ev_charging_state.json")
+
+def load_last_amp():
+    try:
+        with open(STATE_FILE, "r") as f:
+            state = json.load(f)
+            return state.get("last_amp", 0)
+    except FileNotFoundError:
+        return 0
+
+def save_last_amp(amp):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)  # ensure tmp folder exists
+    with open(STATE_FILE, "w") as f:
+        json.dump({"last_amp": amp}, f)
+
+def should_notify(current_amp: int, last_amp: int):
+    """
+    Notification rules:
+    - last_amp == 0 and current_amp > 0 → charging started
+    - last_amp > 0 and current_amp == 0 → charging stopped
+    - last_amp > 0 and current_amp > 0 and current_amp != last_amp → amps changed
+    """
+    if last_amp == 0 and current_amp > 0:
+        return True, f"🔌 Charging started at {current_amp}A"
+
+    if last_amp > 0 and current_amp == 0:
+        return True, "⏹️ Charging stopped"
+
+    if last_amp > 0 and current_amp > 0 and current_amp != last_amp:
+        return True, f"⚡ Amps changed from {last_amp}A to {current_amp}A"
+
+    return False, "No change"
+
+QUIET_START = time(0, 0)    # 00:00
+QUIET_END   = time(6, 45)   # 06:45
+
+def in_quiet_hours(now: pd.Timestamp) -> bool:
+    return QUIET_START <= now.time() <= QUIET_END
+
+now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
+current_row = df_out.iloc[0]
+current_amp = int(current_row["amp"])
+save_last_amp(current_amp)
+
+last_amp = load_last_amp()
+notify, reason = should_notify(current_amp, last_amp)
