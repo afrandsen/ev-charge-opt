@@ -242,15 +242,16 @@ def fetch_github_forecast_dkk(
     Fetches DK1 spot price forecast from GitHub.
     Returns DataFrame with columns: date, price, source.
     """
-    df_github = None
+    df_github = pd.DataFrame(columns=["date", "price", "source"])
     for attempt in range(1, attempts + 1):
         try:
             r = requests.get(github_url, timeout=30)
             r.raise_for_status()
             j = r.json()
-            df_github = pd.DataFrame(list(j.items()), columns=["date", "price"])
-            df_github["date"] = pd.to_datetime(df_github["date"], utc=True)
-            df_github["source"] = "GitHub"
+            df_github_temp = pd.DataFrame(list(j.items()), columns=["date", "price"])
+            df_github_temp["date"] = pd.to_datetime(df_github_temp["date"], utc=True)
+            df_github_temp["source"] = "GitHub"
+            df_github = df_github_temp[["date", "price", "source"]]
             print(f"✅ GitHub forecast success ({len(df_github)} hours) on attempt {attempt}")
             break
         except Exception as e:
@@ -259,7 +260,7 @@ def fetch_github_forecast_dkk(
                 time.sleep(sleep_sec)
             else:
                 print("❌ Github: All attempts failed. Returning empty DataFrame.")
-    return df_github[["date", "price", "source"]]
+    return df_github
 
 def fetch_carnot_forecast_dkk(
     carnot_url: str = "https://openapi.carnot.dk/openapi/get_predict",
@@ -273,7 +274,7 @@ def fetch_carnot_forecast_dkk(
     Fetches DK1 spot price forecast from Carnot API.
     Returns DataFrame with columns: date, price, source.
     """
-    df_carnot = None
+    df_carnot = pd.DataFrame(columns=["date", "price", "source"])
     for attempt in range(1, attempts + 1):
         try:
             headers = {
@@ -285,11 +286,11 @@ def fetch_carnot_forecast_dkk(
             r = requests.get(carnot_url, params=params, headers=headers, timeout=30)
             r.raise_for_status()
             data = r.json()
-            df_carnot = pd.DataFrame(data["predictions"])
-            df_carnot["date"] = pd.to_datetime(df_carnot["utctime"], utc=True)
-            df_carnot["price"] = df_carnot["prediction"] / 10.0 * 1.25
-            df_carnot["source"] = "Carnot"
-            df_carnot = df_carnot[["date", "price", "source"]]
+            df_carnot_temp = pd.DataFrame(data["predictions"])
+            df_carnot_temp["date"] = pd.to_datetime(df_carnot_temp["utctime"], utc=True)
+            df_carnot_temp["price"] = df_carnot_temp["prediction"] / 10.0 * 1.25
+            df_carnot_temp["source"] = "Carnot"
+            df_carnot = df_carnot_temp[["date", "price", "source"]]
             print(f"✅ Carnot forecast success ({len(df_carnot)} hours) on attempt {attempt}")
             break
         except Exception as e:
@@ -298,7 +299,7 @@ def fetch_carnot_forecast_dkk(
                 time.sleep(sleep_sec)
             else:
                 print("❌ Carnot: All attempts failed. Returning empty DataFrame.")
-    return df_carnot[["date", "price", "source"]]
+    return df_carnot
 
 def fetch_combined_forecast(
     source: str = "combined",
