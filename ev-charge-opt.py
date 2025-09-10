@@ -412,7 +412,19 @@ def optimize_ev_charging(
         end_minutes   = t["away_end"].hour * 60 + t["away_end"].minute
         minutes_of_day = df["hour_local"].values[idx_day] * 60 + df["minute_local"].values[idx_day]
         mask = (minutes_of_day >= start_minutes) & (minutes_of_day < end_minutes)
-        available[idx_day[mask]] = 0
+
+        # Determine which indices are "current slot"
+        current_idx = idx_day[minutes_of_day == (now.hour * 60 + now.minute)]
+
+        if IS_HOME and len(current_idx) > 0:
+            # ⚡ override only the current slot
+            print(f"⚡ Override: car is home & plugged in → keeping available=1 at {now}")
+            available[current_idx] = 1
+
+        # mark the rest of the away window as unavailable
+        mask = np.setdiff1d(np.where(mask)[0], current_idx)  # exclude current slot if overridden
+        available[mask] = 0
+
     df["available"] = available
 
     # --- Solar irradiance (Open-Meteo) with retries & fallback ---
