@@ -61,23 +61,33 @@ wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
 
-# Adjust trips if home
+# Adjust
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
+now_minutes = now_slot.hour * 60 + now_slot.minute
+today_wday = now_slot.day_name().lower()
 
 if IS_HOME:
     print(f"⚡ Car is home → shifting any 'current' away trips forward by 15 min")
-    # Only affect trips that currently include now_slot
+    
+    # Only affect trips for today
     for i, t in trips.iterrows():
-        # Parse away_start and away_end to datetime objects for today
-        today = now_slot.date()
-        away_start_dt = datetime.combine(today, t["away_start"])
-        away_end_dt   = datetime.combine(today, t["away_end"])
+        if t["day"].lower() != today_wday:
+            continue
+        
+        # Parse away_start and away_end as minutes since midnight
+        start_h, start_m = map(int, str(t["away_start"]).split(":"))
+        end_h, end_m     = map(int, str(t["away_end"]).split(":"))
+        start_minutes = start_h * 60 + start_m
+        end_minutes   = end_h * 60 + end_m
 
-        if away_start_dt <= now_slot < away_end_dt:
-            # Shift away_start forward by 15 min
-            new_start = (now_slot + pd.Timedelta(minutes=15)).time()
-            trips.at[i, "away_start"] = new_start
+        # If current slot is within this trip, shift the start
+        if start_minutes <= now_minutes < end_minutes:
+            new_start_minutes = now_minutes + 15
+            new_start_h = new_start_minutes // 60
+            new_start_m = new_start_minutes % 60
+            new_start = f"{new_start_h:02d}:{new_start_m:02d}"
             print(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
+            trips.at[i, "away_start"] = new_start
 
 # --- Utility Functions ---
 
