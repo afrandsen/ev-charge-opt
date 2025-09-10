@@ -61,6 +61,24 @@ wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
 
+# Adjust trips if home
+now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
+
+if IS_HOME:
+    print(f"⚡ Car is home → shifting any 'current' away trips forward by 15 min")
+    # Only affect trips that currently include now_slot
+    for i, t in trips.iterrows():
+        # Parse away_start and away_end to datetime objects for today
+        today = now_slot.date()
+        away_start_dt = datetime.combine(today, t["away_start"])
+        away_end_dt   = datetime.combine(today, t["away_end"])
+
+        if away_start_dt <= now_slot < away_end_dt:
+            # Shift away_start forward by 15 min
+            new_start = (now_slot + pd.Timedelta(minutes=15)).time()
+            trips.at[i, "away_start"] = new_start
+            print(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
+
 # --- Utility Functions ---
 
 def _fetch_open_meteo_with_retries(
