@@ -257,6 +257,8 @@ def fetch_github_forecast_dkk(
             print(f"⚠️ GitHub forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
+            else:
+                print("❌ Github: All attempts failed. Returning empty DataFrame.")
     return df_github[["date", "price", "source"]]
 
 def fetch_carnot_forecast_dkk(
@@ -294,6 +296,8 @@ def fetch_carnot_forecast_dkk(
             print(f"⚠️ Carnot forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
+            else:
+                print("❌ Carnot: All attempts failed. Returning empty DataFrame.")
     return df_carnot[["date", "price", "source"]]
 
 def fetch_combined_forecast(
