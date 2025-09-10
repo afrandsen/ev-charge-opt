@@ -19,7 +19,7 @@ if [ "$IS_HOME" = "t" ]; then
       source ~/repos/ev-charge-opt/venv/bin/activate
 
       # Call ev-charge-opt.py with the fetched SOC
-      python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC"
+      python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC" "$IS_HOME"
 else
     echo "🚗 Car is not home → skipping ev-charge-opt"
 fi

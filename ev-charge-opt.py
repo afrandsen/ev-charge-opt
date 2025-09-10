@@ -41,6 +41,7 @@ if len(sys.argv) < 2:
 
 try:
     INITIAL_SOC_PCT = float(sys.argv[1])  # or int(sys.argv[1]) if you only need whole %
+    IS_HOME = sys.argv[2] == "t"
     if INITIAL_SOC_PCT > 1:
         INITIAL_SOC_PCT /= 100.0
 except ValueError:
