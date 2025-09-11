@@ -63,9 +63,9 @@ except ValueError:
     print("EFF_KWH_PER_KM is not a valid number!")
     sys.exit(1)
 
-print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}")
-print(f"Latest 7-day average efficiency received from shell: {EFF_KWH_PER_KM} kWh/km")
-print(f"Latest charging efficiency received from shell: {CHARGE_EFF}")
+print(f"Latest SOC received from shell: {round(INITIAL_SOC_PCT, 2)}")
+print(f"Latest 7-day average efficiency received from shell: {round(EFF_KWH_PER_KM, 2)} kWh/km")
+print(f"Latest charging efficiency received from shell: {round(CHARGE_EFF, 2)}")
 
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
 SOC_MAX_PCT = float(os.getenv("SOC_MAX_PCT"))
