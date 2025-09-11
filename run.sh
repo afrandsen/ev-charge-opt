@@ -19,12 +19,20 @@ if [ "$IS_HOME" = "t" ]; then
       # Fetch charging efficiency from TeslaMate database inside Docker
       CHARGE_EFF=$(docker exec teslamate-database-1 \
                    psql -U teslamate teslamate -t -c \
-                   "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01 LIMIT 1;" | xargs)
+                   "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
+                   AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01 LIMIT 1;" | xargs)
 
       # Fetch efficiency from TeslaMate database inside Docker
       EFF_KWH_PER_KM=$(docker exec teslamate-database-1 \
                        psql -U teslamate teslamate -t -c \
-                       "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_7day_avg FROM drives JOIN cars car ON car.id = drives.car_id WHERE start_date >= NOW() - INTERVAL '7 days' AND distance > 10 AND start_rated_range_km IS NOT NULL AND end_rated_range_km IS NOT NULL AND (start_rated_range_km - end_rated_range_km) > 0 LIMIT 1;" | xargs)
+                       "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_7day_avg \
+                       FROM drives \
+                       JOIN cars car ON car.id = drives.car_id \
+                       WHERE start_date >= NOW() - INTERVAL '7 days' \
+                       AND distance > 10 \
+                       AND start_rated_range_km IS NOT NULL \
+                       AND end_rated_range_km IS NOT NULL \
+                       AND (start_rated_range_km - end_rated_range_km) > 0 LIMIT 1;" | xargs)
 
       source ~/repos/ev-charge-opt/venv/bin/activate
 
