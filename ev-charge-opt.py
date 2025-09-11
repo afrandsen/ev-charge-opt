@@ -20,7 +20,6 @@ CHARGER_KW = 11
 CHARGER_MIN_A = 6
 CHARGER_VOLT = 400
 PHASES = 3
-EFF_KWH_PER_KM = 0.128
 SOLAR_EFF = 0.97
 PANEL_AREA = 11.5
 PANEL_EFF = 0.2046
@@ -31,7 +30,6 @@ LOOAD_TILLAEG = 0.08000
 REFUSION = 0.5
 TILT = 25
 AZIMUTH = 0
-CHARGE_EFF = 0.95
 TZ = "Europe/Copenhagen"
 
 # --- Environment Variables ---
@@ -40,15 +38,34 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 try:
-    INITIAL_SOC_PCT = float(sys.argv[1])  # or int(sys.argv[1]) if you only need whole %
-    IS_HOME = sys.argv[2] == "t"
+    INITIAL_SOC_PCT = float(sys.argv[1])
     if INITIAL_SOC_PCT > 1:
         INITIAL_SOC_PCT /= 100.0
 except ValueError:
     print("SOC is not a valid number!")
     sys.exit(1)
 
+try:
+    IS_HOME = sys.argv[2] == "t"
+except ValueError:
+    print("IS_HOME is not true!")
+    sys.exit(1)
+
+try:
+    EFF_KWH_PER_KM = float(sys.argv[3]) if (0 <= float(sys.argv[3]) <= 1) else 0.128
+except ValueError:
+    print("EFF_KWH_PER_KM is not a valid number!")
+    sys.exit(1)
+
+try:
+    CHARGE_EFF = float(sys.argv[4]) if (0.7 <= float(sys.argv[4]) <= 1) else 0.95
+except ValueError:
+    print("EFF_KWH_PER_KM is not a valid number!")
+    sys.exit(1)
+
 print(f"Latest SOC received from shell: {INITIAL_SOC_PCT}")
+print(f"Latest 7-day average efficiency received from shell: {EFF_KWH_PER_KM} kWh/km")
+print(f"Latest charging efficiency received from shell: {CHARGE_EFF}")
 
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
 SOC_MAX_PCT = float(os.getenv("SOC_MAX_PCT"))
