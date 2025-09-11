@@ -17,10 +17,10 @@ if [ "$IS_HOME" = "t" ]; then
             "SELECT battery_level FROM positions ORDER BY date DESC LIMIT 1;" | xargs)
 
       # Fetch charging efficiency from TeslaMate database inside Docker
-      CHARGE_EFF=$(docker exec teslamate-database-1 \ 
-                  psql -U teslamate teslamate -t -c \
-                  "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
-                  AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01;" | xargs)
+      CHARGE_EFF=$(docker exec teslamate-database-1 \
+                   psql -U teslamate teslamate -t -c \
+                   "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
+                   AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01;" | xargs)
 
       # Fetch efficiency from TeslaMate database inside Docker
       EFF_KWH_PER_KM=$(docker exec teslamate-database-1 \
