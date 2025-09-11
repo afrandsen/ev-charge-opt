@@ -15,7 +15,7 @@ from pytz import timezone
 from pandas.api.types import is_datetime64_any_dtype
 
 # --- Constants & Configuration ---
-BATTERY_KWH = 75
+BATTERY_KWH = 78.1
 CHARGER_KW = 11
 CHARGER_MIN_A = 6
 CHARGER_VOLT = 400
