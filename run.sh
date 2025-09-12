@@ -25,14 +25,19 @@ if [ "$IS_HOME" = "t" ]; then
       # Fetch efficiency from TeslaMate database inside Docker
       EFF_KWH_PER_KM=$(docker exec teslamate-database-1 \
                        psql -U teslamate teslamate -t -c \
-                       "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_7day_avg \
-                       FROM drives \
-                       JOIN cars car ON car.id = drives.car_id \
-                       WHERE start_date >= NOW() - INTERVAL '7 days' \
-                       AND distance > 10 \
-                       AND start_rated_range_km IS NOT NULL \
-                       AND end_rated_range_km IS NOT NULL \
-                       AND (start_rated_range_km - end_rated_range_km) > 0 LIMIT 1;" | xargs)
+                       "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_last10_avg
+                       FROM (
+                           SELECT d.*
+                           FROM drives d
+                           JOIN cars car ON car.id = d.car_id
+                           WHERE distance > 10
+                           AND start_rated_range_km IS NOT NULL
+                           AND end_rated_range_km IS NOT NULL
+                           AND (start_rated_range_km - end_rated_range_km) > 0
+                           ORDER BY start_date DESC
+                           LIMIT 10
+                       ) last10
+                       JOIN cars car ON car.id = last10.car_id LIMIT 1;" | xargs)
 
       source ~/repos/ev-charge-opt/venv/bin/activate
 
