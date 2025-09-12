@@ -9,7 +9,7 @@ IS_HOME=$(docker exec teslamate-database-1 \
           "SELECT (earth_distance(ll_to_earth(latitude, longitude), ll_to_earth(${LAT}, ${LON})) <= 2000) AS is_home FROM positions WHERE car_id = 1 ORDER BY date DESC LIMIT 1;" | xargs)
 
 if [ "$IS_HOME" = "t" ]; then
-    echo "⚡ Car is home within 2000 m → fetching SOC and running ev-charge-opt"
+    echo "⚡ Car is home within 2000 m → running ev-charge-opt"
 
       # Fetch the latest SOC from TeslaMate database inside Docker
       SOC=$(docker exec teslamate-database-1 \
