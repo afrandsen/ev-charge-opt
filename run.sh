@@ -41,6 +41,8 @@ if [ "$IS_HOME" = "t" ]; then
 
       source ~/repos/ev-charge-opt/venv/bin/activate
 
+      python ~/repos/ev-charge-opt/get_trips.py
+
       # Call ev-charge-opt.py with the fetched SOC
       python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC" "$IS_HOME" "$EFF_KWH_PER_KM" "$CHARGE_EFF"
 else
