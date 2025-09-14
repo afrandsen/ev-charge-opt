@@ -6,65 +6,82 @@ import json
 import re
 import os
 import sys
-
-ENV_FILE = ".env.local"
-
 from dotenv import load_dotenv
+
+# =====================
+# LOAD ENV VARIABLES
+# =====================
+ENV_FILE = ".env.local"
 load_dotenv(ENV_FILE)
 
-LOCAL_TZ = ZoneInfo("Europe/Copenhagen")  # Your local timezone
+LOCAL_TZ = ZoneInfo("Europe/Copenhagen")
 
-# Read ICS_URL from environment
-ICS_URL = os.getenv("ICS_URL")
-if not ICS_URL:
-    print("Error: ICS_URL not found in .env.local")
+# Read ICS URLs (comma-separated)
+ICS_URLS = os.getenv("ICS_URLS")
+if not ICS_URLS:
+    print("Error: ICS_URLS not found in .env.local")
     sys.exit(1)
 
-# =====================
-# FETCH CALENDAR WITH ERROR HANDLING
-# =====================
-try:
-    response = requests.get(ICS_URL, timeout=10)
-    response.raise_for_status()
-except requests.exceptions.RequestException as e:
-    print(f"Error fetching ICS feed: {e}")
-    print("Keeping previous .env.local (if it exists).")
-    sys.exit(0)
-
-calendar = Calendar(response.text)
+ics_urls = [url.strip() for url in ICS_URLS.split(",") if url.strip()]
 
 # =====================
-# PARSE EVENTS
+# NORMALIZE TIMES
+# =====================
+def normalize_time(time_str, start=True):
+    h, m = map(int, time_str.split(":"))
+    # Normalize early morning start times
+    if start and h == 0 and 0 < m <= 10:
+        return "00:00"
+    # Normalize late evening end times
+    if not start and h == 23 and m >= 50:
+        return "23:59"
+    return f"{h:02d}:{m:02d}"
+
+# =====================
+# FETCH AND PARSE ALL CALENDARS
 # =====================
 output = []
 now = datetime.now(tz=LOCAL_TZ)
 
-for event in calendar.events:
-    start = event.begin.datetime.astimezone(LOCAL_TZ)
-    end = event.end.datetime.astimezone(LOCAL_TZ)
+for ICS_URL in ics_urls:
+    try:
+        response = requests.get(ICS_URL, timeout=10)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching ICS feed {ICS_URL}: {e}")
+        continue  # Skip this feed but continue with others
 
-    # Skip past events
-    if end < now:
-        continue
+    calendar = Calendar(response.text)
 
-    event_text = f"{event.name or ''} {event.description or ''}"
+    for event in calendar.events:
+        start = event.begin.datetime.astimezone(LOCAL_TZ)
+        end = event.end.datetime.astimezone(LOCAL_TZ)
 
-    # Extract distance in km
-    match_km = re.search(r"(\d+)\s*km", event_text, re.IGNORECASE)
-    distance = int(match_km.group(1)) if match_km else None
+        # Skip past events
+        if end < now:
+            continue
 
-    # Extract manual kWh
-    match_kwh = re.search(r"(\d+(\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
-    trip_kwh = float(match_kwh.group(1)) if match_kwh else None
+        event_text = f"{event.name or ''} {event.description or ''}"
 
-    if distance is not None:
-        output.append({
-            "day": start.strftime("%A").lower(),
-            "away_start": start.strftime("%H:%M"),
-            "away_end": end.strftime("%H:%M"),
-            "distance_km": distance,
-            "trip_kwh": trip_kwh
-        })
+        # Extract distance in km
+        match_km = re.search(r"(\d+)\s*km", event_text, re.IGNORECASE)
+        distance = int(match_km.group(1)) if match_km else None
+
+        # Extract manual kWh
+        match_kwh = re.search(r"(\d+(\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
+        trip_kwh = float(match_kwh.group(1)) if match_kwh else None
+
+        if distance is not None:
+            away_start = normalize_time(start.strftime("%H:%M"), start=True)
+            away_end = normalize_time(end.strftime("%H:%M"), start=False)
+
+            output.append({
+                "day": start.strftime("%A").lower(),
+                "away_start": away_start,
+                "away_end": away_end,
+                "distance_km": distance,
+                "trip_kwh": trip_kwh
+            })
 
 # =====================
 # SORT CHRONOLOGICALLY BY WEEKDAY AND START TIME
@@ -83,7 +100,7 @@ output.sort(key=lambda x: (weekday_order[x["day"]], x["away_start"]))
 # =====================
 # UPDATE TRIPS IN .env.local
 # =====================
-# Read existing .env.local to preserve other variables
+# Preserve other variables
 env_vars = {}
 if os.path.exists(ENV_FILE):
     with open(ENV_FILE, "r") as f:
@@ -101,4 +118,4 @@ with open(ENV_FILE, "w") as f:
     for key, val in env_vars.items():
         f.write(f"{key}={val}\n")
 
-print(f"Updated TRIPS in {ENV_FILE} with {len(output)} events.")
+print(f"Updated TRIPS in {ENV_FILE} with {len(output)} events from {len(ics_urls)} calendars.")
