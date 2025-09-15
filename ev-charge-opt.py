@@ -14,6 +14,13 @@ from datetime import datetime, timedelta
 from pytz import timezone
 from pandas.api.types import is_datetime64_any_dtype
 
+# --- Logging ---
+log_lines = []
+
+def log(msg):
+    log(msg)
+    log_lines.append(str(msg))
+
 # --- Constants & Configuration ---
 BATTERY_KWH = 75
 CHARGER_KW = 11
@@ -34,7 +41,7 @@ TZ = "Europe/Copenhagen"
 
 # --- Environment Variables ---
 if len(sys.argv) < 2:
-    print("No SOC provided!")
+    log("No SOC provided!")
     sys.exit(1)
 
 try:
@@ -42,30 +49,30 @@ try:
     if INITIAL_SOC_PCT > 1:
         INITIAL_SOC_PCT /= 100.0
 except ValueError:
-    print("SOC is not a valid number!")
+    log("SOC is not a valid number!")
     sys.exit(1)
 
 try:
     IS_HOME = sys.argv[2] == "t"
 except ValueError:
-    print("IS_HOME is not true!")
+    log("IS_HOME is not true!")
     sys.exit(1)
 
 try:
     EFF_KWH_PER_KM = float(sys.argv[3]) if (0 <= float(sys.argv[3]) <= 1) else 0.128
 except ValueError:
-    print("EFF_KWH_PER_KM is not a valid number!")
+    log("EFF_KWH_PER_KM is not a valid number!")
     sys.exit(1)
 
 try:
     CHARGE_EFF = float(sys.argv[4]) if (0.7 <= float(sys.argv[4]) <= 1) else 0.95
 except ValueError:
-    print("EFF_KWH_PER_KM is not a valid number!")
+    log("EFF_KWH_PER_KM is not a valid number!")
     sys.exit(1)
 
-print(f"Latest SOC received from shell: {round(INITIAL_SOC_PCT*100, 2)}%")
-print(f"Latest 10 drives average efficiency received from shell: {round(EFF_KWH_PER_KM, 3)} kWh/km")
-print(f"Latest charging efficiency received from shell: {round(CHARGE_EFF*100, 2)}%")
+log(f"Latest SOC received from shell: {round(INITIAL_SOC_PCT*100, 2)}%")
+log(f"Latest 10 drives average efficiency received from shell: {round(EFF_KWH_PER_KM, 3)} kWh/km")
+log(f"Latest charging efficiency received from shell: {round(CHARGE_EFF*100, 2)}%")
 
 SOC_MIN_PCT = float(os.getenv("SOC_MIN_PCT"))
 SOC_MAX_PCT = float(os.getenv("SOC_MAX_PCT"))
@@ -84,7 +91,7 @@ now_minutes = now_slot.hour * 60 + now_slot.minute
 today_wday = now_slot.day_name().lower()
 
 if IS_HOME:
-    print(f"⚡ Car is home → shifting any 'current' away trips forward by 15 min")
+    log(f"⚡ Car is home → shifting any 'current' away trips forward by 15 min")
     
     # Only affect trips for today
     for i, t in trips.iterrows():
@@ -103,7 +110,7 @@ if IS_HOME:
             new_start_h = new_start_minutes // 60
             new_start_m = new_start_minutes % 60
             new_start = f"{new_start_h:02d}:{new_start_m:02d}"
-            print(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
+            log(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
             trips.at[i, "away_start"] = new_start
 
         # --- NEW: If car is home early, shift away_end to now ---
@@ -113,7 +120,7 @@ if IS_HOME:
             new_end_h = new_end_minutes // 60
             new_end_m = new_end_minutes % 60
             new_end = f"{new_end_h:02d}:{new_end_m:02d}"
-            print(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
+            log(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
             trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
@@ -141,12 +148,12 @@ def _fetch_open_meteo_with_retries(
             times = j[time_key]["time"]
             if values is None or len(values) == 0:
                 raise ValueError("Empty values from Open-Meteo")
-            print(f"✅ Open-Meteo success for {time_key} on attempt {attempt}")
+            log(f"✅ Open-Meteo success for {time_key} on attempt {attempt}")
             return times, values
         except Exception as e:
-            print(f"Open-Meteo fetch failed (attempt {attempt}/{attempts}): {e}")
+            log(f"Open-Meteo fetch failed (attempt {attempt}/{attempts}): {e}")
             time.sleep(sleep_sec)
-    print("⚠️ Open-Meteo total failure for URL:", url)
+    log("⚠️ Open-Meteo total failure for URL:", url)
     return None, None
 
 def _align_gti_to_quarters(
@@ -197,20 +204,20 @@ def override_with_inverter(
                 if mask.any():
                     old_val = df.loc[mask, "solar_energy"].values[0]
                     df.loc[mask, "solar_energy"] = solar_kwh_now
-                    print(
+                    log(
                         f"✅ Overrode solar_energy at {now_slot}: "
                         f"{old_val:.3f} → {solar_kwh_now:.3f} kWh (from inverter)"
                     )
                 else:
-                    print(f"⚠️ Current slot {now_slot} not in df timeline")
+                    log(f"⚠️ Current slot {now_slot} not in df timeline")
                 return df
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
         except Exception as e:
-            print(f"⚠️ Inverter fetch failed (attempt {attempt}/{attempts}): {e}")
+            log(f"⚠️ Inverter fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
-    print("⚠️ Inverter override failed after all retries")
+    log("⚠️ Inverter override failed after all retries")
     return df
 
 def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
@@ -221,7 +228,7 @@ def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
     today = datetime.now().date()
     now_cet = pd.Timestamp.now(tz=TZ)
     fetch_tomorrow = now_cet.hour > 12 or (now_cet.hour == 12 and now_cet.minute >= 45)
-    print(
+    log(
         f"{'🟢' if fetch_tomorrow else '🟡'} It is {now_cet.strftime('%H:%M %Z')} → "
         f"{'Nordpool tomorrow data should be available.' if fetch_tomorrow else 'Too early, skipping tomorrow fetch.'}"
     )
@@ -244,15 +251,15 @@ def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
                         }
                         for v in values if v["value"] is not None
                     ]
-                    print(f"✅ Nordpool success for {date_str} on attempt {attempt+1}")
+                    log(f"✅ Nordpool success for {date_str} on attempt {attempt+1}")
                     break
                 except Exception as e:
-                    print(f"Nordpool fetch failed {date_str} (attempt {attempt+1}/{attempts}): {e}")
+                    log(f"Nordpool fetch failed {date_str} (attempt {attempt+1}/{attempts}): {e}")
                     time.sleep(2)
             if rows is not None:
                 dfs.append(pd.DataFrame(rows))
             else:
-                print(f"⚠️ Nordpool prices not yet available for {date_str}, skipping")
+                log(f"⚠️ Nordpool prices not yet available for {date_str}, skipping")
         if not dfs:
             raise RuntimeError("No Nordpool data available at all")
         df = pd.concat(dfs, ignore_index=True)
@@ -279,14 +286,14 @@ def fetch_github_forecast_dkk(
             df_github_temp["date"] = pd.to_datetime(df_github_temp["date"], utc=True)
             df_github_temp["source"] = "GitHub"
             df_github = df_github_temp[["date", "price", "source"]]
-            print(f"✅ GitHub forecast success ({len(df_github)} hours) on attempt {attempt}")
+            log(f"✅ GitHub forecast success ({len(df_github)} hours) on attempt {attempt}")
             break
         except Exception as e:
-            print(f"⚠️ GitHub forecast fetch failed (attempt {attempt}/{attempts}): {e}")
+            log(f"⚠️ GitHub forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
             else:
-                print("❌ Github: All attempts failed. Returning empty DataFrame.")
+                log("❌ Github: All attempts failed. Returning empty DataFrame.")
     return df_github
 
 def fetch_carnot_forecast_dkk(
@@ -318,14 +325,14 @@ def fetch_carnot_forecast_dkk(
             df_carnot_temp["price"] = df_carnot_temp["prediction"] / 10.0 * 1.25
             df_carnot_temp["source"] = "Carnot"
             df_carnot = df_carnot_temp[["date", "price", "source"]]
-            print(f"✅ Carnot forecast success ({len(df_carnot)} hours) on attempt {attempt}")
+            log(f"✅ Carnot forecast success ({len(df_carnot)} hours) on attempt {attempt}")
             break
         except Exception as e:
-            print(f"⚠️ Carnot forecast fetch failed (attempt {attempt}/{attempts}): {e}")
+            log(f"⚠️ Carnot forecast fetch failed (attempt {attempt}/{attempts}): {e}")
             if attempt < attempts:
                 time.sleep(sleep_sec)
             else:
-                print("❌ Carnot: All attempts failed. Returning empty DataFrame.")
+                log("❌ Carnot: All attempts failed. Returning empty DataFrame.")
     return df_carnot
 
 def fetch_combined_forecast(
@@ -341,17 +348,17 @@ def fetch_combined_forecast(
     """
     if source == "github":
         forecast = fetch_github_forecast_dkk()
-        print("🔮 Using Github forecast only")
+        log("🔮 Using Github forecast only")
     elif source == "carnot":
         forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
-        print("🔮 Using Carnot forecast only")
+        log("🔮 Using Carnot forecast only")
     elif source == "combined":
         github = fetch_github_forecast_dkk()
         carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
         last_github = github["date"].max()
         future_carnot = carnot[carnot["date"] > last_github]
         forecast = pd.concat([github, future_carnot], ignore_index=True).sort_values("date").reset_index(drop=True)
-        print("🔮 Using Github forecast (prioritized), Carnot appended")
+        log("🔮 Using Github forecast (prioritized), Carnot appended")
     else:
         raise ValueError(f"Invalid forecast source: {source}")
     return forecast.reset_index(drop=True)
@@ -532,7 +539,7 @@ def optimize_ev_charging(
     df["irradiance"]   = irr_q_vals
     df["solar_energy"] = solar_energy_q
 
-    print(f"✅ Using Open-Meteo irradiance source: {source_used}")
+    log(f"✅ Using Open-Meteo irradiance source: {source_used}")
 
     # Override current slot with inverter data if possible
     df = override_with_inverter(df, tz, token_id, wifi_sn)
@@ -546,8 +553,8 @@ def optimize_ev_charging(
             (df["wday_label"].values == t["day"].lower()) &
             ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
         ]
-        print("trip", t['day'], t['away_start'], " -> matched pos(s):", idx_dep.tolist())
-        print("datetime at matched pos(s):", df.loc[idx_dep, "datetime_local"].tolist())
+        log("trip", t['day'], t['away_start'], " -> matched pos(s):", idx_dep.tolist())
+        log("datetime at matched pos(s):", df.loc[idx_dep, "datetime_local"].tolist())
         if len(idx_dep) >= 1:
             trip_energy_vec[idx_dep[0]] += need_kwh
         if SOC_MIN + need_kwh > SOC_MAX:
@@ -689,17 +696,17 @@ mask_events = (
     (df_out["solar_charge_kwh"].values > 0)
 )
 
-print("\n=== Optimal Charging & Trip Events (15-min) ===")
+log("\n=== Optimal Charging & Trip Events (15-min) ===")
 header = (
     f"{'datetime_local':<16} | {'weekday':<9} | {'hour':<2} | {'minute':<2} | {'irradiance':<10} | "
     f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'eff_price_kr_ref/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
     f"{'amp':>3} | {'trip_kWh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
 )
-print(header)
-print("-" * len(header))
+log(header)
+log("-" * len(header))
 
 for _, row in df_out.loc[mask_events].iterrows():
-    print(
+    log(
         f"{row['datetime_local']:%Y-%m-%d %H:%M} | "
         f"{row['weekday']:<9} | "
         f"{int(row['hour']):<4d} | "
@@ -780,18 +787,18 @@ daily_summary["eff_cost_per_kWh_drawn"]  = daily_summary["effective_cost"] / dai
 daily_summary["eff_cost_per_kWh_stored"] = daily_summary["effective_cost"] / daily_summary["total_stored_kWh"].replace(0, np.nan)
 
 
-# print
-print("\n=== Daily Summary ===")
+# log
+log("\n=== Daily Summary ===")
 header = (
     f"{'date':<10} | {'weekday':<9} | {'grid_kWh':>8} | {'solar_kWh':>8} | "
     f"{'total_kWh':>8} | {'trip_kWh':>8} | {'soc_start%':>9} | {'soc_end%':>7} | "
     f"{'cost':>8} | {'eff_cost':>10} | {'avg_cost':>9} | {'avg_eff':>9}"
 )
-print(header)
-print("-" * len(header))
+log(header)
+log("-" * len(header))
 
 for _, row in daily_summary.iterrows():
-    print(
+    log(
         f"{row['date']} | "
         f"{row['weekday']:<9} | "
         f"{row['grid_drawn_kWh']:8.2f} | "
@@ -806,7 +813,7 @@ for _, row in daily_summary.iterrows():
         f"{row['eff_cost_per_kWh_drawn']:9.2f}"
     )
 
-print(
+log(
     f"Total cost: {total_cost:.2f} kr. "
     f"Total effective cost: {effective_cost:.2f} kr. "
     f"Energy drawn: {total_drawn:.2f} kWh ({from_grid_drawn:.2f} grid, {from_solar_drawn:.2f} solar). "
@@ -883,9 +890,9 @@ def send_email_notification(subject: str, body: str, sender: str, recipient: str
             server.starttls()  # secure connection
             server.login(username, password)
             server.sendmail(sender, recipient, msg.as_string())
-        print("📧 Email notification sent.")
+        log("📧 Email notification sent.")
     except Exception as e:
-        print(f"⚠️ Failed to send email: {e}")
+        log(f"⚠️ Failed to send email: {e}")
 
 def format_charge_plan_simple(df, mask_events, max_rows=24):
     """
@@ -921,7 +928,7 @@ if notify:
     save_last_amp(current_amp)
 
     if in_quiet_hours(now_slot):
-        print(f"🌙 Quiet hours ({now_slot.time()}), no email sent ({reason})")
+        log(f"🌙 Quiet hours ({now_slot.time()}), no email sent ({reason})")
     else:
         subject = f"EV Charging Alert: {current_amp}A at {now_slot.strftime('%H:%M')}"
         body = (
@@ -948,4 +955,4 @@ if notify:
             password=os.getenv("SMTP_PASS"),
         )
 else:
-    print(f"ℹ️ No email sent ({reason})")
+    log(f"ℹ️ No email sent ({reason})")
