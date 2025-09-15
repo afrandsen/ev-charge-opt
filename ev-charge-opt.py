@@ -91,7 +91,7 @@ now_minutes = now_slot.hour * 60 + now_slot.minute
 today_wday = now_slot.day_name().lower()
 
 if IS_HOME:
-    log(f"⚡ Car is home → shifting any 'current' away trips forward by 15 min")
+    log(f"⚡ Car is home → shifting trip times")
     
     # Only affect trips for today
     for i, t in trips.iterrows():
