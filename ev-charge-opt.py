@@ -940,6 +940,12 @@ if notify:
             f"SoC after:  {current_row['soc_pct_after']:.1f}%\n"
         )
 
+
+        # Add log/status messages
+        if log_lines:
+            body += "\n\n=== Status & Log ===\n"
+            body += "\n".join(log_lines)
+
         # Add charge plan table (simple version)
         body += "\n\n=== Optimal Charging & Trip Events (15-min) ===\n"
         body += format_charge_plan_simple(df_out, mask_events, max_rows=24)
