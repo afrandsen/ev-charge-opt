@@ -553,8 +553,8 @@ def optimize_ev_charging(
             (df["wday_label"].values == t["day"].lower()) &
             ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
         ]
-        log("trip", t['day'], t['away_start'], " -> matched pos(s):", idx_dep.tolist())
-        log("datetime at matched pos(s):", df.loc[idx_dep, "datetime_local"].tolist())
+        log(f"trip {t['day']} {t['away_start']} -> matched pos(s): {idx_dep.tolist()}")
+        log(f"datetime at matched pos(s): {df.loc[idx_dep, 'datetime_local'].tolist()}")
         if len(idx_dep) >= 1:
             trip_energy_vec[idx_dep[0]] += need_kwh
         if SOC_MIN + need_kwh > SOC_MAX:
