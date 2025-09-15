@@ -18,7 +18,7 @@ from pandas.api.types import is_datetime64_any_dtype
 log_lines = []
 
 def log(msg):
-    log(msg)
+    print(msg)
     log_lines.append(str(msg))
 
 # --- Constants & Configuration ---
