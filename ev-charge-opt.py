@@ -560,6 +560,33 @@ def optimize_ev_charging(
         if SOC_MIN + need_kwh > SOC_MAX:
             raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
+    soc_max_vec = np.full(H, SOC_MAX)  # default global max
+
+    for _, t in trips.iterrows():
+        # only apply if a per-trip max SOC is defined
+        if "max_soc_pct" in t and pd.notna(t["max_soc_pct"]):
+            trip_max = battery_kwh * float(t["max_soc_pct"])
+            dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
+            idx_dep = df.index[
+                (df["wday_label"].values == t["day"].lower()) &
+                ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
+            ]
+            if len(idx_dep) >= 1:
+                h_dep = idx_dep[0]
+                # allow trip-specific max SOC from last trip end until this departure
+                # find last trip end before this trip
+                last_end = 0
+                for _, t2 in trips.iterrows():
+                    end_m = t2["away_end"].hour * 60 + t2["away_end"].minute
+                    idx_end = df.index[
+                        (df["wday_label"].values == t2["day"].lower()) &
+                        ((df["hour_local"].values * 60 + df["minute_local"].values) == end_m)
+                    ]
+                    if len(idx_end) >= 1 and idx_end[0] < h_dep:
+                        last_end = max(last_end, idx_end[0])
+
+                soc_max_vec[last_end:h_dep+1] = trip_max
+
     # --- Build MILP ---
     cap_per_quarter = charger_kw * 0.25
     min_per_quarter = CHARGER_MIN_KW * 0.25
@@ -569,12 +596,13 @@ def optimize_ev_charging(
     first_trip_idx = np.where(trip_energy_vec > 0)[0]
     soc = {}
     for h in range(H):
-        if h == 0:
-            soc[h] = pulp.LpVariable(f"soc_{h}", lowBound=SOC0, upBound=SOC_MAX, cat=pulp.LpContinuous)
-        elif h < first_trip_idx[0]:
-            soc[h] = pulp.LpVariable(f"soc_{h}", lowBound=SOC0, upBound=SOC_MAX, cat=pulp.LpContinuous)
-        else:
-            soc[h] = pulp.LpVariable(f"soc_{h}", lowBound=SOC_MIN, upBound=SOC_MAX, cat=pulp.LpContinuous)
+        low = SOC0 if h == 0 or h < first_trip_idx[0] else SOC_MIN
+        soc[h] = pulp.LpVariable(
+            f"soc_{h}",
+            lowBound=low,
+            upBound=soc_max_vec[h],
+            cat=pulp.LpContinuous
+        )
     z     = pulp.LpVariable.dicts("z",     range(H), cat=pulp.LpBinary)
     prices_k = df["total_price_kr_kwh"].values
     prob += pulp.lpSum(grid[h] * float(prices_k[h]) - refusion * solar[h] for h in range(H))

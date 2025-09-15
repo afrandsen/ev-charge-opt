@@ -71,6 +71,10 @@ for ICS_URL in ics_urls:
         match_kwh = re.search(r"(\d+(\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
         trip_kwh = float(match_kwh.group(1)) if match_kwh else None
 
+        # Extract max SOC %
+        match_soc = re.search(r"max\s*:\s*(\d+)\s*%", event_text, re.IGNORECASE)
+        max_soc_pct = float(match_soc.group(1)) / 100 if match_soc else None
+
         if distance is not None:
             away_start = normalize_time(start.strftime("%H:%M"), start=True)
             away_end = normalize_time(end.strftime("%H:%M"), start=False)
@@ -80,7 +84,8 @@ for ICS_URL in ics_urls:
                 "away_start": away_start,
                 "away_end": away_end,
                 "distance_km": distance,
-                "trip_kwh": trip_kwh
+                "trip_kwh": trip_kwh,
+                "max_soc_pct": max_soc_pct
             })
 
 # =====================
