@@ -106,6 +106,16 @@ if IS_HOME:
             print(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
             trips.at[i, "away_start"] = new_start
 
+        # --- NEW: If car is home early, shift away_end to now ---
+        # If now is within the away period, and car is home, set away_end to now
+        if start_minutes < now_minutes < end_minutes:
+            new_end_minutes = now_minutes
+            new_end_h = new_end_minutes // 60
+            new_end_m = new_end_minutes % 60
+            new_end = f"{new_end_h:02d}:{new_end_m:02d}"
+            print(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
+            trips.at[i, "away_end"] = new_end
+
 # --- Utility Functions ---
 
 def _fetch_open_meteo_with_retries(
@@ -877,6 +887,36 @@ def send_email_notification(subject: str, body: str, sender: str, recipient: str
     except Exception as e:
         print(f"⚠️ Failed to send email: {e}")
 
+def format_charge_plan_simple(df, mask_events, max_rows=24):
+    """
+    Returns a string summary of the charge plan (first max_rows rows with events).
+    Columns: weekday, hour, minute, amps, effective_price_kr_per_kwh_drawn_with_refusion, soc_pct_before, soc_pct_after
+    """
+    cols = [
+        "weekday", "hour", "minute", "amp",
+        "effective_price_kr_per_kwh_drawn_with_refusion",
+        "soc_pct_before", "soc_pct_after"
+    ]
+    df_short = df.loc[mask_events, cols].copy().head(max_rows)
+    lines = []
+    header = (
+        f"{'weekday':<9} | {'hour':>2} | {'minute':>2} | {'amp':>4} | "
+        f"{'eff_price_kr/kWh':>20} | {'SoC% before':>11} | {'SoC% after':>10}"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for _, row in df_short.iterrows():
+        lines.append(
+            f"{row['weekday']:<9} | "
+            f"{int(row['hour']):2d} | "
+            f"{int(row['minute']):2d} | "
+            f"{int(row['amp']):4d} | "
+            f"{row['effective_price_kr_per_kwh_drawn_with_refusion']:20.2f} | "
+            f"{row['soc_pct_before']:11.1f} | "
+            f"{row['soc_pct_after']:10.1f}"
+        )
+    return "\n".join(lines)
+
 if notify:
     save_last_amp(current_amp)
 
@@ -892,6 +932,10 @@ if notify:
             f"SoC before: {current_row['soc_pct_before']:.1f}%\n"
             f"SoC after:  {current_row['soc_pct_after']:.1f}%\n"
         )
+
+        # Add charge plan table (simple version)
+        body += "\n\n=== Optimal Charging & Trip Events (15-min) ===\n"
+        body += format_charge_plan_simple(df_out, mask_events, max_rows=24)
 
         send_email_notification(
             subject=subject,
