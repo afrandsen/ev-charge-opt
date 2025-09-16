@@ -61,6 +61,11 @@ for ICS_URL in ics_urls:
         if end < now:
             continue
 
+        # Only include events within today and the next 6 days
+        days_ahead = (start.date() - now.date()).days
+        if days_ahead < 0 or days_ahead > 6:
+            continue
+
         event_text = f"{event.name or ''} {event.description or ''}"
 
         # Extract distance in km
