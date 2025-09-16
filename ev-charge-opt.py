@@ -576,6 +576,7 @@ def optimize_ev_charging(
 
     # --- Trip energy vector ---
     trip_energy_vec = np.zeros(H)
+    sc_energy_vec = np.zeros(H)
     for _, t in trips.iterrows():
         need_kwh = (float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km)
 
@@ -593,6 +594,7 @@ def optimize_ev_charging(
         if len(idx_dep) >= 1:
             h_dep = idx_dep[0]
             trip_energy_vec[idx_dep[0]] += need_kwh
+            sc_energy_vec[idx_dep[0]] += float(t["supercharge_kwh"])
         if SOC_MIN + need_kwh > soc_max_vec[h_dep]:
             raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
@@ -658,6 +660,7 @@ def optimize_ev_charging(
         "price_kr_per_kwh": np.round(df["total_price_kr_kwh"].values, 5),
         "available": df["available"].values,
         "trip_kwh_at_departure": np.round(trip_energy_vec, 3),
+        "sc_kwh": np.round(sc_energy_vec, 3),
 
         # DRAWN (same column names as before for backward compatibility)
         "grid_charge_kwh":  np.round(grid_opt, 4),
@@ -737,7 +740,7 @@ log("\n=== Optimal Charging & Trip Events (15-min) ===")
 header = (
     f"{'datetime_local':<16} | {'weekday':<9} | {'hour':<2} | {'minute':<2} | {'irradiance':<10} | "
     f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'eff_price_kr_ref/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
-    f"{'amp':>3} | {'trip_kWh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
+    f"{'amp':>3} | {'trip_kWh':>8} | {'sc_kwh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
 )
 log(header)
 log("-" * len(header))
@@ -757,6 +760,7 @@ for _, row in df_out.loc[mask_events].iterrows():
         f"{row['total_charge_kwh']:>9.2f} | "
         f"{int(row['amp']):>3d} | "
         f"{row['trip_kwh_at_departure']:>8.2f} | "
+        f"{row['sc_kwh']:>8.2f} |"
         f"{row['soc_kwh']:>7.2f} | "
         f"{row['soc_pct_before']:>12.1f} | "
         f"{row['soc_pct_after']:>11.1f}"
