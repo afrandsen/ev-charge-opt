@@ -350,11 +350,11 @@ def fetch_combined_forecast(
         forecast = fetch_github_forecast_dkk()
         log("🔮 Using Github forecast only")
     elif source == "carnot":
-        forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
+        forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=3)
         log("🔮 Using Carnot forecast only")
     elif source == "combined":
         github = fetch_github_forecast_dkk()
-        carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=7, attempts=3)
+        carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=3)
         last_github = github["date"].max()
         future_carnot = carnot[carnot["date"] > last_github]
         forecast = pd.concat([github, future_carnot], ignore_index=True).sort_values("date").reset_index(drop=True)
