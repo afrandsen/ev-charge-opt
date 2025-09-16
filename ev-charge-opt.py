@@ -761,7 +761,7 @@ for _, row in df_out.loc[mask_events].iterrows():
         f"{int(row['amp']):>3d} | "
         f"{row['trip_kwh_at_departure']:>8.2f} | "
         f"{row['sc_kwh']:>8.2f} |"
-        f"{row['soc_kwh']:>7.2f} | "
+        f"{row['soc_kwh']:>8.2f} | "
         f"{row['soc_pct_before']:>12.1f} | "
         f"{row['soc_pct_after']:>11.1f}"
     )
