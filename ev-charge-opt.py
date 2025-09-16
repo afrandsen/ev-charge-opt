@@ -590,25 +590,29 @@ def optimize_ev_charging(
     # --- Per-trip min SOC logic ---
     soc_min_vec = np.full(H, SOC_MIN)  # default global min
 
-    # Find all trip departures sorted by time
-    trip_deps = []
     for _, t in trips.iterrows():
-        dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
-        idx_dep = df.index[
-            (df["wday_label"].values == t["day"].lower()) &
-            ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
-        ]
-        if len(idx_dep) >= 1:
-            trip_deps.append((idx_dep[0], t))
+        # only apply if a per-trip min SOC is defined
+        if "min_soc_pct" in t and pd.notna(t["min_soc_pct"]):
+            trip_min = battery_kwh * float(t["min_soc_pct"])
+            dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
+            idx_dep = df.index[
+                (df["wday_label"].values == t["day"].lower()) &
+                ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
+            ]
+            if len(idx_dep) >= 1:
+                h_dep = idx_dep[0]
+                # allow trip-specific min SOC from last trip end until this departure
+                last_end = 0
+                for _, t2 in trips.iterrows():
+                    end_m = t2["away_end"].hour * 60 + t2["away_end"].minute
+                    idx_end = df.index[
+                        (df["wday_label"].values == t2["day"].lower()) &
+                        ((df["hour_local"].values * 60 + df["minute_local"].values) == end_m)
+                    ]
+                    if len(idx_end) >= 1 and idx_end[0] < h_dep:
+                        last_end = max(last_end, idx_end[0])
 
-    trip_deps = sorted(trip_deps, key=lambda x: x[0])
-
-    for i, (h_dep, t) in enumerate(trip_deps):
-        # Use per-trip min if set, else global
-        trip_min = battery_kwh * float(t.get("min_soc_pct", soc_min_pct))
-        # Range: from this departure to next departure (or end)
-        h_next = trip_deps[i+1][0] if i+1 < len(trip_deps) else H
-        soc_min_vec[h_dep:h_next] = trip_min
+                soc_min_vec[last_end:h_dep+1] = trip_min
 
     # --- Build MILP ---
     cap_per_quarter = charger_kw * 0.25
