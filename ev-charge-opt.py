@@ -544,22 +544,6 @@ def optimize_ev_charging(
     # Override current slot with inverter data if possible
     df = override_with_inverter(df, tz, token_id, wifi_sn)
 
-    # --- Trip energy vector ---
-    trip_energy_vec = np.zeros(H)
-    for _, t in trips.iterrows():
-        need_kwh = float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km
-        dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
-        idx_dep = df.index[
-            (df["wday_label"].values == t["day"].lower()) &
-            ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
-        ]
-        log(f"trip {t['day']} {t['away_start']} -> matched pos(s): {idx_dep.tolist()}")
-        log(f"datetime at matched pos(s): {df.loc[idx_dep, 'datetime_local'].tolist()}")
-        if len(idx_dep) >= 1:
-            trip_energy_vec[idx_dep[0]] += need_kwh
-        if SOC_MIN + need_kwh > SOC_MAX:
-            raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
-
     soc_max_vec = np.full(H, SOC_MAX)  # default global max
 
     for _, t in trips.iterrows():
@@ -614,6 +598,24 @@ def optimize_ev_charging(
 
                 soc_min_vec[last_end:h_dep+1] = trip_min
 
+    # --- Trip energy vector ---
+    trip_energy_vec = np.zeros(H)
+    for _, t in trips.iterrows():
+        need_kwh = float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km
+        dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
+        idx_dep = df.index[
+            (df["wday_label"].values == t["day"].lower()) &
+            ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
+        ]
+        log(f"trip {t['day']} {t['away_start']} -> matched pos(s): {idx_dep.tolist()}")
+        log(f"datetime at matched pos(s): {df.loc[idx_dep, 'datetime_local'].tolist()}")
+        if len(idx_dep) >= 1:
+            h_dep = idx_dep[0]
+            trip_energy_vec[idx_dep[0]] += need_kwh
+        if soc_min_vec[h_dep] + need_kwh > soc_max_vec[h_dep]:
+            raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
+
+
     # --- Build MILP ---
     cap_per_quarter = charger_kw * 0.25
     min_per_quarter = CHARGER_MIN_KW * 0.25
@@ -652,7 +654,7 @@ def optimize_ev_charging(
     trip_rows = np.where(trip_energy_vec > 0)[0]
     for h in trip_rows:
         if h > 0:
-            prob += soc[h-1] >= SOC_MIN + float(trip_energy_vec[h])
+            prob += soc[h-1] >= soc_min_vec[h-1] + float(trip_energy_vec[h])
 
     solver = pulp.PULP_CBC_CMD(msg=False)
     res_status = prob.solve(solver)
