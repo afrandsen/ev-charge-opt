@@ -571,33 +571,6 @@ def optimize_ev_charging(
 
                 soc_max_vec[last_end:h_dep+1] = trip_max
 
-    # --- Per-trip min SOC logic ---
-    soc_min_vec = np.full(H, SOC_MIN)  # default global min
-
-    # Find all trip starts sorted by time
-    trip_starts = []
-    for _, t in trips.iterrows():
-        dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
-        idx_dep = df.index[
-            (df["wday_label"].values == t["day"].lower()) &
-            ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
-        ]
-        if len(idx_dep) >= 1:
-            trip_starts.append((idx_dep[0], t))
-
-    trip_starts = sorted(trip_starts, key=lambda x: x[0])
-
-    for i, (h_start, t) in enumerate(trip_starts):
-        min_soc_pct_val = t.get("min_soc_pct", None)
-        if min_soc_pct_val is None or pd.isna(min_soc_pct_val):
-            min_soc_pct_val = soc_min_pct
-        if min_soc_pct_val is None or pd.isna(min_soc_pct_val):
-            min_soc_pct_val = SOC_MIN / battery_kwh
-        trip_min = battery_kwh * float(min_soc_pct_val)
-        # Set from this trip start to next trip start (or end of timeline)
-        h_next = trip_starts[i+1][0] if i+1 < len(trip_starts) else H
-        soc_min_vec[h_start:h_next] = trip_min
-
     # --- Trip energy vector ---
     trip_energy_vec = np.zeros(H)
     for _, t in trips.iterrows():
@@ -612,9 +585,8 @@ def optimize_ev_charging(
         if len(idx_dep) >= 1:
             h_dep = idx_dep[0]
             trip_energy_vec[idx_dep[0]] += need_kwh
-        if soc_min_vec[h_dep] + need_kwh > soc_max_vec[h_dep]:
+        if SOC_MIN + need_kwh > soc_max_vec[h_dep]:
             raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
-
 
     # --- Build MILP ---
     cap_per_quarter = charger_kw * 0.25
@@ -625,7 +597,7 @@ def optimize_ev_charging(
     first_trip_idx = np.where(trip_energy_vec > 0)[0]
     soc = {}
     for h in range(H):
-        low = SOC0 if h == 0 or h < first_trip_idx[0] else soc_min_vec[h]
+        low = SOC0 if h == 0 or h < first_trip_idx[0] else SOC_MIN
         soc[h] = pulp.LpVariable(
             f"soc_{h}",
             lowBound=low,
@@ -654,7 +626,7 @@ def optimize_ev_charging(
     trip_rows = np.where(trip_energy_vec > 0)[0]
     for h in trip_rows:
         if h > 0:
-            prob += soc[h-1] >= soc_min_vec[h-1] + float(trip_energy_vec[h])
+            prob += soc[h-1] >= SOC_MIN + float(trip_energy_vec[h])
 
     solver = pulp.PULP_CBC_CMD(msg=False)
     res_status = prob.solve(solver)
