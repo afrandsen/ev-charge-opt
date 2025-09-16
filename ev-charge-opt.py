@@ -104,24 +104,27 @@ if IS_HOME:
         start_minutes = start_h * 60 + start_m
         end_minutes   = end_h * 60 + end_m
 
-        # If current slot is within this trip, shift the start
         if start_minutes <= now_minutes < end_minutes:
-            new_start_minutes = now_minutes + 15
-            new_start_h = new_start_minutes // 60
-            new_start_m = new_start_minutes % 60
-            new_start = f"{new_start_h:02d}:{new_start_m:02d}"
-            log(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
-            trips.at[i, "away_start"] = new_start
+            # Distance from now to start/end
+            dist_to_start = now_minutes - start_minutes
+            dist_to_end   = end_minutes - now_minutes
 
-        # --- NEW: If car is home early, shift away_end to now ---
-        # If now is within the away period, and car is home, set away_end to now
-        # if start_minutes < now_minutes < end_minutes:
-        #     new_end_minutes = now_minutes
-        #     new_end_h = new_end_minutes // 60
-        #     new_end_m = new_end_minutes % 60
-        #     new_end = f"{new_end_h:02d}:{new_end_m:02d}"
-        #     log(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
-        #     trips.at[i, "away_end"] = new_end
+            if dist_to_start <= dist_to_end:
+                # Closer to start → shift start forward
+                new_start_minutes = now_minutes + 15
+                new_start_h = new_start_minutes // 60
+                new_start_m = new_start_minutes % 60
+                new_start = f"{new_start_h:02d}:{new_start_m:02d}"
+                log(f"Trip on {t['day']} shifted: away_start {t['away_start']} → {new_start}")
+                trips.at[i, "away_start"] = new_start
+            else:
+                # Closer to end → cut trip short
+                new_end_minutes = now_minutes
+                new_end_h = new_end_minutes // 60
+                new_end_m = new_end_minutes % 60
+                new_end = f"{new_end_h:02d}:{new_end_m:02d}"
+                log(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
+                trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
 
