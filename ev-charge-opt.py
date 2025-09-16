@@ -115,13 +115,13 @@ if IS_HOME:
 
         # --- NEW: If car is home early, shift away_end to now ---
         # If now is within the away period, and car is home, set away_end to now
-        if start_minutes < now_minutes < end_minutes:
-            new_end_minutes = now_minutes
-            new_end_h = new_end_minutes // 60
-            new_end_m = new_end_minutes % 60
-            new_end = f"{new_end_h:02d}:{new_end_m:02d}"
-            log(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
-            trips.at[i, "away_end"] = new_end
+        # if start_minutes < now_minutes < end_minutes:
+        #     new_end_minutes = now_minutes
+        #     new_end_h = new_end_minutes // 60
+        #     new_end_m = new_end_minutes % 60
+        #     new_end = f"{new_end_h:02d}:{new_end_m:02d}"
+        #     log(f"Trip on {t['day']} shifted: away_end {t['away_end']} → {new_end} (car home early)")
+        #     trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
 
@@ -574,29 +574,29 @@ def optimize_ev_charging(
     # --- Per-trip min SOC logic ---
     soc_min_vec = np.full(H, SOC_MIN)  # default global min
 
+    # Find all trip starts sorted by time
+    trip_starts = []
     for _, t in trips.iterrows():
-        # only apply if a per-trip min SOC is defined
-        if "min_soc_pct" in t and pd.notna(t["min_soc_pct"]):
-            trip_min = battery_kwh * float(t["min_soc_pct"])
-            dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
-            idx_dep = df.index[
-                (df["wday_label"].values == t["day"].lower()) &
-                ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
-            ]
-            if len(idx_dep) >= 1:
-                h_dep = idx_dep[0]
-                # allow trip-specific min SOC from last trip end until this departure
-                last_end = 0
-                for _, t2 in trips.iterrows():
-                    end_m = t2["away_end"].hour * 60 + t2["away_end"].minute
-                    idx_end = df.index[
-                        (df["wday_label"].values == t2["day"].lower()) &
-                        ((df["hour_local"].values * 60 + df["minute_local"].values) == end_m)
-                    ]
-                    if len(idx_end) >= 1 and idx_end[0] < h_dep:
-                        last_end = max(last_end, idx_end[0])
+        dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
+        idx_dep = df.index[
+            (df["wday_label"].values == t["day"].lower()) &
+            ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
+        ]
+        if len(idx_dep) >= 1:
+            trip_starts.append((idx_dep[0], t))
 
-                soc_min_vec[last_end:h_dep+1] = trip_min
+    trip_starts = sorted(trip_starts, key=lambda x: x[0])
+
+    for i, (h_start, t) in enumerate(trip_starts):
+        min_soc_pct_val = t.get("min_soc_pct", None)
+        if min_soc_pct_val is None or pd.isna(min_soc_pct_val):
+            min_soc_pct_val = soc_min_pct
+        if min_soc_pct_val is None or pd.isna(min_soc_pct_val):
+            min_soc_pct_val = SOC_MIN / battery_kwh
+        trip_min = battery_kwh * float(min_soc_pct_val)
+        # Set from this trip start to next trip start (or end of timeline)
+        h_next = trip_starts[i+1][0] if i+1 < len(trip_starts) else H
+        soc_min_vec[h_start:h_next] = trip_min
 
     # --- Trip energy vector ---
     trip_energy_vec = np.zeros(H)
