@@ -577,7 +577,12 @@ def optimize_ev_charging(
     # --- Trip energy vector ---
     trip_energy_vec = np.zeros(H)
     for _, t in trips.iterrows():
-        need_kwh = float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km
+        need_kwh = (float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km)
+
+        # subtract free supercharge boost if column exists
+        if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
+            need_kwh -= float(t["supercharge_kwh"])
+
         dep_minutes = t["away_start"].hour * 60 + t["away_start"].minute
         idx_dep = df.index[
             (df["wday_label"].values == t["day"].lower()) &
