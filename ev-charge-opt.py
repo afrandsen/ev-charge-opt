@@ -88,7 +88,6 @@ wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
 
-# Adjust
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
 now_minutes = now_slot.hour * 60 + now_slot.minute
 today_wday = now_slot.day_name().lower()
@@ -130,7 +129,6 @@ if IS_HOME:
                 trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
-
 def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
     msg = MIMEMultipart()
     msg["From"] = sender
@@ -408,7 +406,6 @@ prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_foreca
 prices = prices.sort_values("date").reset_index(drop=True)
 
 # --- Main Optimization Function ---
-
 def optimize_ev_charging(
     trips: pd.DataFrame,
     prices: pd.DataFrame,
@@ -462,11 +459,27 @@ def optimize_ev_charging(
     df["spot_kr_kwh"] = prices["price"] / 100.0
 
     h = df["hour_local"].values
-    dso = np.full(len(df), 0.12763)
-    dso[(h >= 0) & (h < 6)] = 0.08512
-    dso[(h >= 6) & (h < 17)] = 0.12763
-    dso[(h >= 17) & (h < 21)] = 0.33200
+    df_dates = df["datetime_local"].dt.date
+    cutover = pd.Timestamp("2025-10-01").date()
+
+    dso = np.zeros(len(df))
+
+    # Old tariffs
+    mask_old = df_dates < cutover
+    dso[mask_old & (h >= 0) & (h < 6)]   = 0.08512
+    dso[mask_old & (h >= 6) & (h < 17)]  = 0.12763
+    dso[mask_old & (h >= 17) & (h < 21)] = 0.33200
+    dso[mask_old & (h >= 21) & (h < 24)] = 0.12763
+
+    # New tariffs from 1 Oct 2025
+    mask_new = df_dates >= cutover
+    dso[mask_new & (h >= 0) & (h < 6)]   = 0.08512
+    dso[mask_new & (h >= 6) & (h < 17)]  = 0.25540
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.76610
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.25540
+
     df["dso_tariff"] = dso
+
     df["total_price_kr_kwh"] = df["spot_kr_kwh"] + FLAT_ADDERS + df["dso_tariff"]
 
     # --- Expand to 15-min resolution ---
@@ -478,8 +491,7 @@ def optimize_ev_charging(
     df_q["wday_label"] = df_q["datetime_local"].dt.day_name().str.lower()
 
     df = df_q
-
-    # Alternativ now = pd.Timestamp.now(tz=tz)
+    
     now = pd.Timestamp.now(tz=tz).floor("15min")
 
     # filter from current hour and forward
