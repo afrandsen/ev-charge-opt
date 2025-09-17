@@ -13,6 +13,9 @@ import pulp
 from datetime import datetime, timedelta
 from pytz import timezone
 from pandas.api.types import is_datetime64_any_dtype
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- Logging ---
 log_lines = []
@@ -127,6 +130,23 @@ if IS_HOME:
                 trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
+
+def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
+    msg = MIMEMultipart()
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()  # secure connection
+            server.login(username, password)
+            server.sendmail(sender, recipient, msg.as_string())
+        log("📧 Email notification sent.")
+    except Exception as e:
+        log(f"⚠️ Failed to send email: {e}")
 
 def _fetch_open_meteo_with_retries(
     url: str,
@@ -687,7 +707,8 @@ def optimize_ev_charging(
 
     return df_out
 
-df_out = optimize_ev_charging(
+try:
+    df_out = optimize_ev_charging(
     trips,
     prices,
     BATTERY_KWH, SOC_MIN_PCT, SOC_MAX_PCT,
@@ -700,6 +721,18 @@ df_out = optimize_ev_charging(
     CHARGE_EFF,
     REFUSION
 )
+except RuntimeError as e:
+    send_email_notification(
+        subject="❌ EV Charging Optimization Failed",
+        body=str(e),
+        sender=os.getenv("EMAIL_SENDER"),
+        recipient=os.getenv("EMAIL_RECIPIENT"),
+        smtp_server=os.getenv("SMTP_SERVER"),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        username=os.getenv("SMTP_USER"),
+        password=os.getenv("SMTP_PASS"),
+    )
+    sys.exit(1)  # optional
 
 
 # SoC before/after around charging/trip events (use stored energy, not drawn)
@@ -864,7 +897,6 @@ log(
 )
 
 # --- Notification Logic ---
-# Use ~/repos/ev-charge-opt/tmp
 STATE_FILE = os.path.expanduser("~/repos/ev-charge-opt/tmp/ev_charging_state.json")
 
 def load_last_amp():
@@ -912,28 +944,6 @@ current_amp = int(current_row["amp"])
 
 last_amp = load_last_amp()
 notify, reason = should_notify(current_amp, last_amp)
-
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
-# --- Email Notification ---
-def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
-    msg = MIMEMultipart()
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg["Subject"] = subject
-
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()  # secure connection
-            server.login(username, password)
-            server.sendmail(sender, recipient, msg.as_string())
-        log("📧 Email notification sent.")
-    except Exception as e:
-        log(f"⚠️ Failed to send email: {e}")
 
 def format_charge_plan_simple(df, mask_events, max_rows=24):
     """
