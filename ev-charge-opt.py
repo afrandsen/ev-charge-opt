@@ -661,6 +661,7 @@ def optimize_ev_charging(
     solver = pulp.PULP_CBC_CMD(msg=False)
     res_status = prob.solve(solver)
     if pulp.LpStatus[prob.status] != "Optimal":
+        log(f"MILP not optimal. Status: {pulp.LpStatus[prob.status]}")
         raise RuntimeError(f"MILP not optimal. Status: {pulp.LpStatus[prob.status]}")
 
     # --- Results ---
