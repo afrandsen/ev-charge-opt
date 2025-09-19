@@ -626,7 +626,8 @@ def optimize_ev_charging(
         if len(idx_dep) >= 1:
             h_dep = idx_dep[0]
             trip_energy_vec[idx_dep[0]] += need_kwh
-            sc_energy_vec[idx_dep[0]] += float(t["supercharge_kwh"])
+            if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
+                sc_energy_vec[idx_dep[0]] += float(t["supercharge_kwh"])
         if SOC_MIN + need_kwh > soc_max_vec[h_dep]:
             raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
