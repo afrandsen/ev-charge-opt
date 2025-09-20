@@ -100,7 +100,7 @@ for ICS_URL in ics_urls:
         distance = int(match_km.group(1)) if match_km else None
 
         # Extract manual kWh
-        match_kwh = re.search(r"trip\s*:(\d+(?:\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
+        match_kwh = re.search(r"trip\s*:\s*(\d+(?:\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
         trip_kwh = float(match_kwh.group(1)) if match_kwh else None
 
         # Extract max SOC %
@@ -108,7 +108,7 @@ for ICS_URL in ics_urls:
         max_soc_pct = float(match_max_soc.group(1)) / 100 if match_max_soc else None
 
         # Extract supercharge kWh
-        match_sc_kwh = re.search(r"sc\s*:(\d+(?:\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
+        match_sc_kwh = re.search(r"sc\s*:\s*(\d+(?:\.\d+)?)\s*kwh", event_text, re.IGNORECASE)
         sc_kwh = float(match_sc_kwh.group(1)) if match_sc_kwh else None
 
         if distance is not None:
