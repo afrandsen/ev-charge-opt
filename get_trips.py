@@ -29,18 +29,38 @@ ics_urls = [url.strip() for url in ICS_URLS.split(",") if url.strip()]
 # =====================
 def normalize_time(time_str, start=True):
     h, m = map(int, time_str.split(":"))
-    # Normalize early morning start times
     if start and h == 0 and 0 < m <= 10:
         return "00:00"
-    # Normalize late evening end times
     if not start and h == 23 and m >= 50:
         return "23:59"
     return f"{h:02d}:{m:02d}"
 
 # =====================
+# EVENT HELPERS
+# =====================
+def is_excluded(event):
+    """Return True if event start matches any EXDATE in raw ICS extras."""
+    exdates = []
+    for extra in event.extra:
+        if extra.name == "EXDATE":
+            values = extra.value if isinstance(extra.value, list) else [extra.value]
+            for v in values:
+                if isinstance(v, str):
+                    try:
+                        exdates.append(datetime.strptime(v, "%Y%m%dT%H%M%S"))
+                    except ValueError:
+                        continue
+                else:
+                    exdates.append(v)
+    return any(
+        event.begin.datetime.replace(tzinfo=None) == exdate.replace(tzinfo=None)
+        for exdate in exdates if hasattr(exdate, "replace")
+    )
+
+# =====================
 # FETCH AND PARSE ALL CALENDARS
 # =====================
-trips = {}
+output = []
 now = datetime.now(tz=LOCAL_TZ)
 
 for ICS_URL in ics_urls:
@@ -49,13 +69,20 @@ for ICS_URL in ics_urls:
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching ICS feed {ICS_URL}: {e}")
-        continue  # Skip this feed but continue with others
+        continue
 
     calendar = Calendar(response.text)
 
     for event in calendar.events:
         start = event.begin.datetime.astimezone(LOCAL_TZ)
         end = event.end.datetime.astimezone(LOCAL_TZ)
+
+        # Skip cancelled or excluded events
+        status = getattr(event, "status", "") or ""
+        if status.lower() == "cancelled":
+            continue
+        if is_excluded(event):
+            continue
 
         # Skip past events
         if end < now:
@@ -88,54 +115,15 @@ for ICS_URL in ics_urls:
             away_start = normalize_time(start.strftime("%H:%M"), start=True)
             away_end = normalize_time(end.strftime("%H:%M"), start=False)
 
-            event_info = {
+            output.append({
                 "day": start.strftime("%A").lower(),
                 "away_start": away_start,
                 "away_end": away_end,
                 "distance_km": distance,
                 "trip_kwh": trip_kwh,
                 "supercharge_kwh": sc_kwh,
-                "max_soc_pct": max_soc_pct,
-                "title": event.name,
-                "description": event.description,
-                "location": event.location,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "source": "base"
-            }
-
-            key = (start.date(), away_start, away_end)
-
-            if key not in trips:
-                trips[key] = event_info
-            else:
-                existing = trips[key]
-                # Prefer event with more info
-                def score(e):
-                    return sum([
-                        1 if e["max_soc_pct"] else 0,
-                        1 if e["trip_kwh"] else 0,
-                        1 if e["supercharge_kwh"] else 0,
-                    ])
-                if score(event_info) > score(existing):
-                    event_info["source"] = "override"
-                    trips[key] = event_info
-
-# =====================
-# FINAL OUTPUT
-# =====================
-output = []
-for t in trips.values():
-    if t["distance_km"] is not None:
-        output.append({
-            "day": t["day"],
-            "away_start": t["away_start"],
-            "away_end": t["away_end"],
-            "distance_km": t["distance_km"],
-            "trip_kwh": t["trip_kwh"],
-            "supercharge_kwh": t["supercharge_kwh"],
-            "max_soc_pct": t["max_soc_pct"]
-        })
+                "max_soc_pct": max_soc_pct
+            })
 
 # =====================
 # SORT CHRONOLOGICALLY BY WEEKDAY AND START TIME
@@ -154,7 +142,6 @@ output.sort(key=lambda x: (weekday_order[x["day"]], x["away_start"]))
 # =====================
 # UPDATE TRIPS IN .env.local
 # =====================
-# Preserve other variables
 env_vars = {}
 if os.path.exists(ENV_FILE):
     with open(ENV_FILE, "r") as f:
@@ -164,12 +151,10 @@ if os.path.exists(ENV_FILE):
                 key, val = line.split("=", 1)
                 env_vars[key] = val
 
-# Update TRIPS variable
 env_vars["TRIPS"] = json.dumps(output, separators=(",", ":"))
 
-# Write back all variables
 with open(ENV_FILE, "w") as f:
     for key, val in env_vars.items():
         f.write(f"{key}={val}\n")
 
-print(f"Updated TRIPS in {ENV_FILE} with {len(output)} trips from {len(ics_urls)} calendars.")
+print(f"Updated TRIPS in {ENV_FILE} with {len(output)} events from {len(ics_urls)} calendars.")
