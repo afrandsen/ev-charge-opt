@@ -40,7 +40,7 @@ def normalize_time(time_str, start=True):
 # =====================
 # FETCH AND PARSE ALL CALENDARS
 # =====================
-output = []
+trips = {}
 now = datetime.now(tz=LOCAL_TZ)
 
 for ICS_URL in ics_urls:
@@ -88,15 +88,54 @@ for ICS_URL in ics_urls:
             away_start = normalize_time(start.strftime("%H:%M"), start=True)
             away_end = normalize_time(end.strftime("%H:%M"), start=False)
 
-            output.append({
+            event_info = {
                 "day": start.strftime("%A").lower(),
                 "away_start": away_start,
                 "away_end": away_end,
                 "distance_km": distance,
                 "trip_kwh": trip_kwh,
                 "supercharge_kwh": sc_kwh,
-                "max_soc_pct": max_soc_pct
-            })
+                "max_soc_pct": max_soc_pct,
+                "title": event.name,
+                "description": event.description,
+                "location": event.location,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "source": "base"
+            }
+
+            key = (start.date(), away_start, away_end)
+
+            if key not in trips:
+                trips[key] = event_info
+            else:
+                existing = trips[key]
+                # Prefer event with more info
+                def score(e):
+                    return sum([
+                        1 if e["max_soc_pct"] else 0,
+                        1 if e["trip_kwh"] else 0,
+                        1 if e["supercharge_kwh"] else 0,
+                    ])
+                if score(event_info) > score(existing):
+                    event_info["source"] = "override"
+                    trips[key] = event_info
+
+# =====================
+# FINAL OUTPUT
+# =====================
+output = []
+for t in trips.values():
+    if t["distance_km"] is not None:
+        output.append({
+            "day": t["day"],
+            "away_start": t["away_start"],
+            "away_end": t["away_end"],
+            "distance_km": t["distance_km"],
+            "trip_kwh": t["trip_kwh"],
+            "supercharge_kwh": t["supercharge_kwh"],
+            "max_soc_pct": t["max_soc_pct"]
+        })
 
 # =====================
 # SORT CHRONOLOGICALLY BY WEEKDAY AND START TIME
@@ -133,4 +172,4 @@ with open(ENV_FILE, "w") as f:
     for key, val in env_vars.items():
         f.write(f"{key}={val}\n")
 
-print(f"Updated TRIPS in {ENV_FILE} with {len(output)} events from {len(ics_urls)} calendars.")
+print(f"Updated TRIPS in {ENV_FILE} with {len(output)} trips from {len(ics_urls)} calendars.")
