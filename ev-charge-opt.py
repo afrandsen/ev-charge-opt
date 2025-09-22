@@ -629,6 +629,7 @@ def optimize_ev_charging(
             if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
                 sc_energy_vec[idx_dep[0]] += float(t["supercharge_kwh"])
         if SOC_MIN + need_kwh > soc_max_vec[h_dep]:
+            log(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
             raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
     # --- Build MILP ---
