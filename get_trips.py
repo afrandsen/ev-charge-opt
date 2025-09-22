@@ -1,12 +1,15 @@
 import requests
-from ics import Calendar
-from datetime import datetime
+from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo  # Python 3.9+
 import json
 import re
 import os
 import sys
 from dotenv import load_dotenv
+
+# recurrence expansion library + ical parser
+import icalendar
+import recurring_ical_events
 
 # =====================
 # LOAD ENV VARIABLES
@@ -35,65 +38,101 @@ def normalize_time(time_str, start=True):
         return "23:59"
     return f"{h:02d}:{m:02d}"
 
-# =====================
-# EVENT HELPERS
-# =====================
-def is_excluded(event):
-    """Return True if event start matches any EXDATE in raw ICS extras."""
-    exdates = []
-    for extra in event.extra:
-        if extra.name == "EXDATE":
-            values = extra.value if isinstance(extra.value, list) else [extra.value]
-            for v in values:
-                if isinstance(v, str):
-                    try:
-                        exdates.append(datetime.strptime(v, "%Y%m%dT%H%M%S"))
-                    except ValueError:
-                        continue
-                else:
-                    exdates.append(v)
-    return any(
-        event.begin.datetime.replace(tzinfo=None) == exdate.replace(tzinfo=None)
-        for exdate in exdates if hasattr(exdate, "replace")
-    )
+# helper to convert ical dt to timezone-aware datetime in LOCAL_TZ
+def to_local_dt(dt):
+    # dt can be date or datetime
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        # all-day: treat as midnight
+        return datetime.combine(dt, time(0, 0)).replace(tzinfo=LOCAL_TZ)
+    # datetime case
+    if dt.tzinfo is None:
+        # floating time - assume local timezone (same behavior as your previous approach)
+        return dt.replace(tzinfo=LOCAL_TZ)
+    return dt.astimezone(LOCAL_TZ)
 
 # =====================
-# FETCH AND PARSE ALL CALENDARS
+# FETCH AND PARSE ALL CALENDARS WITH RECURRENCE EXPANSION
 # =====================
 output = []
 now = datetime.now(tz=LOCAL_TZ)
 
+# Build query window: today .. next 6 days (inclusive)
+start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+# include whole last day by adding 6 days + 23:59:59
+query_end = start_of_today + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+seen_occurrences = set()  # to deduplicate by (uid, occurrence-start-iso)
+
 for ICS_URL in ics_urls:
     try:
-        response = requests.get(ICS_URL, timeout=10)
-        response.raise_for_status()
+        resp = requests.get(ICS_URL, timeout=10)
+        resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching ICS feed {ICS_URL}: {e}")
         continue
 
-    calendar = Calendar(response.text)
+    # parse with icalendar
+    try:
+        cal = icalendar.Calendar.from_ical(resp.content)
+    except Exception as e:
+        print(f"Error parsing ICS from {ICS_URL}: {e}")
+        continue
 
-    for event in calendar.events:
-        start = event.begin.datetime.astimezone(LOCAL_TZ)
-        end = event.end.datetime.astimezone(LOCAL_TZ)
+    # expand recurrences and yield actual occurrences in the date/time window
+    try:
+        occurrences = recurring_ical_events.of(cal).between(start_of_today, query_end)
+    except Exception as e:
+        print(f"Error expanding recurrences for {ICS_URL}: {e}")
+        continue
 
-        # Skip cancelled or excluded events
-        status = getattr(event, "status", "") or ""
-        if status.lower() == "cancelled":
+    for comp in occurrences:
+        # comp is a icalendar component (VEVENT-like) for a single occurrence
+
+        # get DTSTART
+        dtstart_prop = comp.get("DTSTART")
+        if not dtstart_prop:
             continue
-        if is_excluded(event):
-            continue
+        dtstart_val = dtstart_prop.dt
+        start_dt = to_local_dt(dtstart_val)
+
+        # get DTEND (fallback to DTSTART if missing)
+        dtend_prop = comp.get("DTEND")
+        if dtend_prop:
+            dtend_val = dtend_prop.dt
+            end_dt = to_local_dt(dtend_val)
+        else:
+            # try DURATION
+            dur = comp.get("DURATION")
+            if dur:
+                try:
+                    end_dt = start_dt + dur.dt
+                except Exception:
+                    end_dt = start_dt
+            else:
+                end_dt = start_dt
 
         # Skip past events
-        if end < now:
+        if end_dt < now:
             continue
 
-        # Only include events within today and the next 6 days
-        days_ahead = (start.date() - now.date()).days
+        # Only include events within today and the next 6 days (based on start date)
+        days_ahead = (start_dt.date() - now.date()).days
         if days_ahead < 0 or days_ahead > 6:
             continue
 
-        event_text = f"{event.name or ''} {event.description or ''}"
+        # dedupe by UID + occurrence start
+        uid_prop = comp.get("UID")
+        uid = str(uid_prop) if uid_prop else None
+        occ_key = (uid, start_dt.isoformat()) if uid else (start_dt.isoformat(), comp.get("SUMMARY"))
+        if occ_key in seen_occurrences:
+            continue
+        seen_occurrences.add(occ_key)
+
+        # Build searchable text from SUMMARY and DESCRIPTION
+        summary = comp.get("SUMMARY")
+        description = comp.get("DESCRIPTION")
+        # ical properties may be of type vText etc. convert to str safely
+        event_text = f"{str(summary) if summary else ''} {str(description) if description else ''}"
 
         # Extract distance in km
         match_km = re.search(r"(\d+)\s*km", event_text, re.IGNORECASE)
@@ -112,11 +151,11 @@ for ICS_URL in ics_urls:
         sc_kwh = float(match_sc_kwh.group(1)) if match_sc_kwh else None
 
         if distance is not None:
-            away_start = normalize_time(start.strftime("%H:%M"), start=True)
-            away_end = normalize_time(end.strftime("%H:%M"), start=False)
+            away_start = normalize_time(start_dt.strftime("%H:%M"), start=True)
+            away_end = normalize_time(end_dt.strftime("%H:%M"), start=False)
 
             output.append({
-                "day": start.strftime("%A").lower(),
+                "day": start_dt.strftime("%A").lower(),
                 "away_start": away_start,
                 "away_end": away_end,
                 "distance_km": distance,
@@ -137,7 +176,7 @@ weekday_order = {
     "saturday": 5,
     "sunday": 6
 }
-output.sort(key=lambda x: (weekday_order[x["day"]], x["away_start"]))
+output.sort(key=lambda x: (weekday_order.get(x["day"], 7), x["away_start"]))
 
 # =====================
 # UPDATE TRIPS IN .env.local
