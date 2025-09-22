@@ -6,3 +6,5 @@ pulp
 pytz
 nordpool
 ics
+icalendar
+recurring_ical_events
