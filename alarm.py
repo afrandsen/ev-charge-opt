@@ -38,20 +38,30 @@ except ValueError:
     log("CHARGING is not false!")
     sys.exit(1)
 
+try:
+    SOC_PCT = float(sys.argv[2])
+    if SOC_PCT > 1:
+        SOC_PCT /= 100.0
+except ValueError:
+    log("SOC is not a valid number!")
+    sys.exit(1)
+
 # --- Notification Logic ---
 STATE_FILE = os.path.expanduser("~/repos/ev-charge-opt/tmp/ev_charging_state.json")
 
-def load_last_amp():
+def load_last_state():
     try:
         with open(STATE_FILE, "r") as f:
             state = json.load(f)
-            return state.get("last_amp", 0)
+            last_amp = state.get("last_amp", 0)
+            target_soc = state.get("target_soc", 0)
+            return last_amp, target_soc
     except FileNotFoundError:
         return 0
-    
-last_amp = load_last_amp()
 
-if last_amp > 0:
+last_amp, target_soc = load_last_state()
+
+if last_amp > 0 and SOC_PCT < target_soc:
     subject = "NOT CHARGING"
 
     body = "NOT CHARGING"

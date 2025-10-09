@@ -927,6 +927,11 @@ def save_last_amp(amp):
     with open(STATE_FILE, "w") as f:
         json.dump({"last_amp": amp}, f)
 
+def save_target_soc(soc):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)  # ensure tmp folder exists
+    with open(STATE_FILE, "w") as f:
+        json.dump({"target_soc": soc}, f)
+
 def should_notify(current_amp: int, last_amp: int):
     """
     Notification rules:
@@ -958,6 +963,7 @@ current_row = df_out.iloc[0]
 current_amp = int(current_row["amp"])
 
 last_amp = load_last_amp()
+save_target_soc(current_row["soc_pct_after"])
 notify, reason = should_notify(current_amp, last_amp)
 
 def format_charge_plan_simple(df, mask_events, max_rows=24):

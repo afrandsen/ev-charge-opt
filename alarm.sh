@@ -11,6 +11,11 @@ IS_HOME=$(docker exec teslamate-database-1 \
 if [ "$IS_HOME" = "t" ]; then
     echo "⚡ Car is home within 2000 m → running alarm"
 
+    # Fetch the latest SOC from TeslaMate database inside Docker
+    SOC=$(docker exec teslamate-database-1 \
+            psql -U teslamate teslamate -t -c \
+            "SELECT battery_level FROM positions ORDER BY date DESC LIMIT 1;" | xargs)
+    
     # Fetch if car is charging from TeslaMate database inside Docker
     CHARGING=$(docker exec teslamate-database-1 \
                    psql -U teslamate teslamate -t -c \
@@ -22,7 +27,7 @@ if [ "$IS_HOME" = "t" ]; then
         source ~/repos/ev-charge-opt/venv/bin/activate
 
         # Call alarm.py with the fetched charging state
-        python ~/repos/ev-charge-opt/alarm.py "$CHARGING"
+        python ~/repos/ev-charge-opt/alarm.py "$CHARGING" "$SOC"
     
     else
         echo "✅ Car is charging → skipping alarm"
