@@ -963,7 +963,7 @@ current_row = df_out.iloc[0]
 current_amp = int(current_row["amp"])
 
 last_amp = load_last_amp()
-save_target_soc(current_row["soc_pct_after"])
+save_target_soc(current_row["soc_pct_after"]/100)
 notify, reason = should_notify(current_amp, last_amp)
 
 def format_charge_plan_simple(df, mask_events, max_rows=24):
