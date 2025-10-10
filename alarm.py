@@ -61,7 +61,7 @@ def load_last_state():
 
 last_amp, target_soc = load_last_state()
 
-if last_amp > 0 and SOC_PCT < target_soc:
+if last_amp > 0 and round(SOC_PCT) < round(target_soc):
     subject = "NOT CHARGING"
 
     body = "NOT CHARGING"

@@ -923,14 +923,42 @@ def load_last_amp():
         return 0
 
 def save_last_amp(amp):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)  # ensure tmp folder exists
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+
+    # Load existing data if it exists
+    state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            try:
+                state = json.load(f)
+            except json.JSONDecodeError:
+                state = {}
+
+    # Update only the last_amp
+    state["last_amp"] = amp
+
+    # Save updated file
     with open(STATE_FILE, "w") as f:
-        json.dump({"last_amp": amp}, f)
+        json.dump(state, f, indent=4)
 
 def save_target_soc(soc):
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)  # ensure tmp folder exists
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+
+    # Load existing data if it exists
+    state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            try:
+                state = json.load(f)
+            except json.JSONDecodeError:
+                state = {}
+
+    # Update only the target_soc
+    state["target_soc"] = soc
+
+    # Save updated file
     with open(STATE_FILE, "w") as f:
-        json.dump({"target_soc": soc}, f)
+        json.dump(state, f, indent=4)
 
 def should_notify(current_amp: int, last_amp: int):
     """
