@@ -991,8 +991,9 @@ current_row = df_out.iloc[0]
 current_amp = int(current_row["amp"])
 
 last_amp = load_last_amp()
-save_target_soc(current_row["soc_pct_after"]/100)
 notify, reason = should_notify(current_amp, last_amp)
+save_target_soc(current_row["soc_pct_after"]/100)
+save_last_amp(current_amp)
 
 def format_charge_plan_simple(df, mask_events, max_rows=24):
     """
@@ -1025,7 +1026,6 @@ def format_charge_plan_simple(df, mask_events, max_rows=24):
     return "\n".join(lines)
 
 if notify:
-    save_last_amp(current_amp)
 
     if in_quiet_hours(now_slot):
         log(f"🌙 Quiet hours ({now_slot.time()}), no email sent ({reason})")
