@@ -57,7 +57,7 @@ def load_last_state():
             target_soc = state.get("target_soc", 0)
             return last_amp, target_soc
     except FileNotFoundError:
-        return 0
+        return 0, 0
 
 last_amp, target_soc = load_last_state()
 
