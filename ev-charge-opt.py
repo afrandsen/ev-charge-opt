@@ -1025,7 +1025,14 @@ def format_charge_plan_simple(df, mask_events, max_rows=24):
         )
     return "\n".join(lines)
 
-if notify:
+# Always send email at 21:00 (local TZ)
+FORCED_SEND_HOUR = 21
+FORCED_SEND_MINUTE = 0
+
+now_time = now_slot.time()
+forced_send = now_time.hour == FORCED_SEND_HOUR and now_time.minute == FORCED_SEND_MINUTE
+
+if notify or forced_send:
 
     if in_quiet_hours(now_slot):
         log(f"🌙 Quiet hours ({now_slot.time()}), no email sent ({reason})")
