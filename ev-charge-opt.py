@@ -648,9 +648,17 @@ def optimize_ev_charging(
             upBound=soc_max_vec[h],
             cat=pulp.LpContinuous
         )
-    z     = pulp.LpVariable.dicts("z",     range(H), cat=pulp.LpBinary)
+    # z: session active binary per quarter
+    z = pulp.LpVariable.dicts("z", range(H), cat=pulp.LpBinary)
+    # s: start indicator (1 if a charging session starts this quarter)
+    # Penalize starts with a tiny cost to prefer continuity in ties.
+    START_PENALTY = 0.001  # kr per start; tiny tie-breaker (adjust if needed)
+    s = pulp.LpVariable.dicts("start", range(H), cat=pulp.LpBinary)
     prices_k = df["total_price_kr_kwh"].values
-    prob += pulp.lpSum(grid[h] * float(prices_k[h]) - refusion * solar[h] for h in range(H))
+    prob += (
+        pulp.lpSum(grid[h] * float(prices_k[h]) - refusion * solar[h] for h in range(H))
+        + START_PENALTY * pulp.lpSum(s[h] for h in range(H))
+    )
 
     # SOC dynamics with charging efficiency
     for h in range(H):
@@ -667,6 +675,10 @@ def optimize_ev_charging(
         prob += grid[h] + solar[h] <= (cap_per_quarter * avail[h]) * z[h]
         prob += solar[h] <= solar_cap[h] * z[h]
         prob += grid[h] + solar[h] >= min_per_quarter * z[h]
+    # Link start variables: s[0] >= z[0]; for h>0, s[h] >= z[h] - z[h-1]
+    prob += s[0] >= z[0]
+    for h in range(1, H):
+        prob += s[h] >= z[h] - z[h-1]
     trip_rows = np.where(trip_energy_vec > 0)[0]
     for h in trip_rows:
         if h > 0:
