@@ -448,7 +448,12 @@ def optimize_ev_charging(
     SOC_MIN = battery_kwh * soc_min_pct
     SOC_MAX = battery_kwh * soc_max_pct
     SOC0    = battery_kwh * initial_soc_pct
-    FLAT_ADDERS = systemtarif + nettarif_tso + elafgift + looad_tillaeg
+    # Historic flat adders (current rates)
+    HISTORIC_FLAT = systemtarif + nettarif_tso + elafgift + looad_tillaeg
+    # Effective from 2026-01-01: LOOAD_TILLAEG -> 0.00, ELAFGIFT -> 1.00
+    FUTURE_ELAFGIFT = 1.00
+    FUTURE_LOOAD_TILLAEG = 0.00
+    FUTURE_FLAT = systemtarif + nettarif_tso + FUTURE_ELAFGIFT + FUTURE_LOOAD_TILLAEG
 
     # --- Build timeline & prices ---
     df = pd.DataFrame({"datetime_utc": prices["date"]})
@@ -480,7 +485,11 @@ def optimize_ev_charging(
 
     df["dso_tariff"] = dso
 
-    df["total_price_kr_kwh"] = df["spot_kr_kwh"] + FLAT_ADDERS + df["dso_tariff"]
+    # Apply correct flat adders depending on date (historic until 2025-12-31, new rates from 2026-01-01)
+    change_date = pd.Timestamp("2026-01-01").date()
+    df_dates = df["datetime_local"].dt.date
+    df["flat_adders"] = np.where(df_dates >= change_date, FUTURE_FLAT, HISTORIC_FLAT)
+    df["total_price_kr_kwh"] = df["spot_kr_kwh"] + df["flat_adders"] + df["dso_tariff"]
 
     # --- Expand to 15-min resolution ---
     N = len(df)
