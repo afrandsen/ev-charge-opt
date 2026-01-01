@@ -35,8 +35,8 @@ PANEL_AREA = 11.5
 PANEL_EFF = 0.2046
 SYSTEMTARIF = 0.09250
 NETTARIF_TSO = 0.07625
-ELAFGIFT = 0.40000
-LOOAD_TILLAEG = 0.08000
+ELAFGIFT = 0.01000
+TILLAEG = 0.00000
 REFUSION = 0.0
 TILT = 25
 AZIMUTH = 0
@@ -424,7 +424,7 @@ def optimize_ev_charging(
     systemtarif: float = SYSTEMTARIF,
     nettarif_tso: float = NETTARIF_TSO,
     elafgift: float = ELAFGIFT,
-    looad_tillaeg: float = LOOAD_TILLAEG,
+    TILLAEG: float = TILLAEG,
     lat: float = LAT,
     lon: float = LON,
     tilt: float = TILT,
@@ -448,7 +448,7 @@ def optimize_ev_charging(
     SOC_MIN = battery_kwh * soc_min_pct
     SOC_MAX = battery_kwh * soc_max_pct
     SOC0    = battery_kwh * initial_soc_pct
-    FLAT_ADDERS = systemtarif + nettarif_tso + elafgift + looad_tillaeg
+    FLAT_ADDERS = systemtarif + nettarif_tso + elafgift + TILLAEG
 
     # --- Build timeline & prices ---
     df = pd.DataFrame({"datetime_utc": prices["date"]})
@@ -742,7 +742,7 @@ try:
     CHARGER_KW, CHARGER_MIN_A, CHARGER_VOLT, PHASES,
     EFF_KWH_PER_KM, INITIAL_SOC_PCT,
     SOLAR_EFF, PANEL_AREA, PANEL_EFF,
-    SYSTEMTARIF, NETTARIF_TSO, ELAFGIFT, LOOAD_TILLAEG,
+    SYSTEMTARIF, NETTARIF_TSO, ELAFGIFT, TILLAEG,
     LAT, LON, TILT, AZIMUTH,
     TZ,
     CHARGE_EFF,
