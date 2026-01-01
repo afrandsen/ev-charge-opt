@@ -460,7 +460,7 @@ def optimize_ev_charging(
 
     h = df["hour_local"].values
     df_dates = df["datetime_local"].dt.date
-    cutover = pd.Timestamp("2025-10-01").date()
+    cutover = pd.Timestamp("2026-01-01").date()
 
     dso = np.zeros(len(df))
 
@@ -471,12 +471,12 @@ def optimize_ev_charging(
     dso[mask_old & (h >= 17) & (h < 21)] = 0.33200
     dso[mask_old & (h >= 21) & (h < 24)] = 0.12763
 
-    # New tariffs from 1 Oct 2025
+    # New tariffs from 1 Jan 2026
     mask_new = df_dates >= cutover
-    dso[mask_new & (h >= 0) & (h < 6)]   = 0.08512
-    dso[mask_new & (h >= 6) & (h < 17)]  = 0.25540
-    dso[mask_new & (h >= 17) & (h < 21)] = 0.76610
-    dso[mask_new & (h >= 21) & (h < 24)] = 0.25540
+    dso[mask_new & (h >= 0) & (h < 6)]   = 0.070375
+    dso[mask_new & (h >= 6) & (h < 17)]  = 0.21125
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.63375
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.21125
 
     df["dso_tariff"] = dso
 
