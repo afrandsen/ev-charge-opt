@@ -149,7 +149,7 @@ def send_email_notification(subject: str, body: str, sender: str, recipient: str
 def _fetch_open_meteo_with_retries(
     url: str,
     value_path: list,
-    attempts: int = 3,
+    attempts: int = 5,
     sleep_sec: int = 2
 ) -> tuple:
     """
@@ -202,7 +202,7 @@ def override_with_inverter(
     tz: str,
     token_id: str,
     wifi_sn: str,
-    attempts: int = 3,
+    attempts: int = 5,
     sleep_sec: int = 2
 ) -> pd.DataFrame:
     """
@@ -241,7 +241,7 @@ def override_with_inverter(
     log("⚠️ Inverter override failed after all retries")
     return df
 
-def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
+def fetch_dk1_prices_dkk(attempts: int = 5) -> pd.DataFrame:
     """
     Fetches DK1 spot prices from Nordpool (today and, if available, tomorrow).
     Returns DataFrame with columns: date, price, source.
@@ -290,7 +290,7 @@ def fetch_dk1_prices_dkk(attempts: int = 3) -> pd.DataFrame:
 
 def fetch_github_forecast_dkk(
     github_url: str = "https://raw.githubusercontent.com/solmoller/Spotprisprognose/refs/heads/main/DK1.json",
-    attempts: int = 3,
+    attempts: int = 5,
     sleep_sec: int = 2
 ) -> pd.DataFrame:
     """
@@ -322,7 +322,7 @@ def fetch_carnot_forecast_dkk(
     apikey: str = "YOUR_API_KEY",
     username: str = "YOUR_USERNAME",
     daysahead: int = 3,
-    attempts: int = 3,
+    attempts: int = 5,
     sleep_sec: int = 2
 ) -> pd.DataFrame:
     """
@@ -371,11 +371,11 @@ def fetch_combined_forecast(
         forecast = fetch_github_forecast_dkk()
         log("🔮 Using Github forecast only")
     elif source == "carnot":
-        forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=3)
+        forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=5)
         log("🔮 Using Carnot forecast only")
     elif source == "combined":
         github = fetch_github_forecast_dkk()
-        carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=3)
+        carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=5)
         last_github = github["date"].max()
         future_carnot = carnot[carnot["date"] > last_github]
         forecast = pd.concat([github, future_carnot], ignore_index=True).sort_values("date").reset_index(drop=True)
@@ -534,7 +534,7 @@ def optimize_ev_charging(
     t15, v15 = _fetch_open_meteo_with_retries(
         url_15,
         ["minutely_15", "global_tilted_irradiance_instant"],
-        attempts=3, sleep_sec=2
+        attempts=5, sleep_sec=2
     )
 
     # Then try hourly (as fallback and/or for filling gaps)
@@ -542,7 +542,7 @@ def optimize_ev_charging(
     th, vh = _fetch_open_meteo_with_retries(
         url_h,
         ["hourly", "global_tilted_irradiance_instant"],
-        attempts=3, sleep_sec=2
+        attempts=5, sleep_sec=2
     )
 
     if t15 is None and th is None:
