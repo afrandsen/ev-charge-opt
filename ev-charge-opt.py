@@ -187,8 +187,16 @@ def _align_gti_to_quarters(
     Return quarter-resolution Series aligned to given times.
     If repeat_to_quarters=True (hourly input), repeat each hour 4×.
     """
-    ts = pd.to_datetime(times).tz_localize(tz)
+    ts = pd.to_datetime(times, errors="coerce").tz_localize(
+    tz,
+    nonexistent="NaT",
+    ambiguous="NaT")
     arr = np.array(values, dtype=float)
+
+    # Drop invalid timestamps (DST gap etc.)
+    valid_mask = ~ts.isna()
+    ts = ts[valid_mask]
+    arr = arr[valid_mask]
     if repeat_to_quarters:
         ts_q = ts.repeat(4) + pd.to_timedelta(np.tile([0, 15, 30, 45], len(ts)), unit="m")
         arr_q = arr.repeat(4)
@@ -460,23 +468,23 @@ def optimize_ev_charging(
 
     h = df["hour_local"].values
     df_dates = df["datetime_local"].dt.date
-    cutover = pd.Timestamp("2026-01-01").date()
+    cutover = pd.Timestamp("2026-04-01").date()
 
     dso = np.zeros(len(df))
 
     # Old tariffs
     mask_old = df_dates < cutover
-    dso[mask_old & (h >= 0) & (h < 6)]   = 0.08512
-    dso[mask_old & (h >= 6) & (h < 17)]  = 0.12763
-    dso[mask_old & (h >= 17) & (h < 21)] = 0.33200
-    dso[mask_old & (h >= 21) & (h < 24)] = 0.12763
+    dso[mask_old & (h >= 0) & (h < 6)]   = 0.070375
+    dso[mask_old & (h >= 6) & (h < 17)]  = 0.21125
+    dso[mask_old & (h >= 17) & (h < 21)] = 0.63375
+    dso[mask_old & (h >= 21) & (h < 24)] = 0.21125
 
-    # New tariffs from 1 Jan 2026
+    # New tariffs from 1 April 2026
     mask_new = df_dates >= cutover
     dso[mask_new & (h >= 0) & (h < 6)]   = 0.070375
-    dso[mask_new & (h >= 6) & (h < 17)]  = 0.21125
-    dso[mask_new & (h >= 17) & (h < 21)] = 0.63375
-    dso[mask_new & (h >= 21) & (h < 24)] = 0.21125
+    dso[mask_new & (h >= 6) & (h < 17)]  = 0.105625
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.274625
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.105625
 
     df["dso_tariff"] = dso
 
