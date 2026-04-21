@@ -365,6 +365,72 @@ def fetch_carnot_forecast_dkk(
                 log("❌ Carnot: All attempts failed. Returning empty DataFrame.")
     return df_carnot
 
+def fetch_eur_dkk_exchange_rate(attempts: int = 5, sleep_sec: int = 1) -> float:
+    """
+    Fetches the current EUR to DKK exchange rate.
+    Returns the exchange rate as a float.
+    """
+    exchange_url = "https://api.exchangerate-api.com/v4/latest/EUR"
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(exchange_url, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            rate = data["rates"]["DKK"]
+            log(f"✅ EUR/DKK exchange rate: {rate}")
+            return rate
+        except Exception as e:
+            log(f"⚠️ Exchange rate fetch failed (attempt {attempt}/{attempts}): {e}")
+            if attempt < attempts:
+                time.sleep(sleep_sec)
+            else:
+                log("❌ Exchange rate fetch failed. Using fallback rate of 7.47")
+                return 7.47
+
+def fetch_epex_forecast_dkk(
+    epex_url: str = "https://epexpredictor.batzill.com/prices",
+    attempts: int = 5,
+    sleep_sec: int = 2
+) -> pd.DataFrame:
+    """
+    Fetches DK1 spot price forecast from EPEX Predictor.
+    Returns DataFrame with columns: date, price, source.
+    """
+    df_epex = pd.DataFrame(columns=["date", "price", "source"])
+    
+    # Fetch current EUR/DKK exchange rate
+    exchange_rate = fetch_eur_dkk_exchange_rate()
+    
+    params = {
+        "hours": -1,
+        "surcharge": 0,
+        "taxPercent": 0,
+        "region": "DK1",
+        "evaluation": False,
+        "unit": "EUR_PER_MWH",
+        "hourly": False,
+        "timezone": "Europe/Copenhagen"
+    }
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(epex_url, params=params, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            df_epex_temp = pd.DataFrame(data["prices"])
+            df_epex_temp["date"] = pd.to_datetime(df_epex_temp["startsAt"], utc=True)
+            df_epex_temp["price"] = (df_epex_temp["total"]/10)*exchange_rate*1.25 
+            df_epex_temp["source"] = "EPEX"
+            df_epex = df_epex_temp[["date", "price", "source"]]
+            log(f"✅ EPEX forecast success ({len(df_epex)} hours) on attempt {attempt}")
+            break
+        except Exception as e:
+            log(f"⚠️ EPEX forecast fetch failed (attempt {attempt}/{attempts}): {e}")
+            if attempt < attempts:
+                time.sleep(sleep_sec)
+            else:
+                log("❌ EPEX: All attempts failed. Returning empty DataFrame.")
+    return df_epex
+
 def fetch_combined_forecast(
     source: str = "combined",
     apikey: str = "YOUR_API_KEY",
@@ -374,6 +440,7 @@ def fetch_combined_forecast(
     Fetch price forecast(s) depending on selected source.
     - "github": only Github spot price forecast
     - "carnot": only Carnot forecast
+    - "epex": only EPEX Predictor forecast
     - "combined": Github prioritized, Carnot appended (default)
     """
     if source == "github":
@@ -382,6 +449,9 @@ def fetch_combined_forecast(
     elif source == "carnot":
         forecast = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=5)
         log("🔮 Using Carnot forecast only")
+    elif source == "epex":
+        forecast = fetch_epex_forecast_dkk()
+        log("🔮 Using EPEX forecast only")
     elif source == "combined":
         github = fetch_github_forecast_dkk()
         carnot = fetch_carnot_forecast_dkk(apikey=apikey, username=username, daysahead=6, attempts=5)
@@ -419,7 +489,7 @@ def combine_actuals_and_forecast(
 
 # --- Data Fetching ---
 prices_actual = fetch_dk1_prices_dkk()
-prices_forecast = fetch_combined_forecast(source="combined", apikey=carnot_apikey, username=carnot_username)
+prices_forecast = fetch_combined_forecast(source="epex", apikey=carnot_apikey, username=carnot_username)
 prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz=TZ)
 prices = prices.sort_values("date").reset_index(drop=True)
 
