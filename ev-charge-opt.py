@@ -33,6 +33,7 @@ PHASES = 3
 SOLAR_EFF = 0.97
 PANEL_AREA = 11.5
 PANEL_EFF = 0.2046
+SOLAR_MAX_KWH = 2.5
 SYSTEMTARIF = 0.09000
 NETTARIF_TSO = 0.05375
 ELAFGIFT = 0.01000
@@ -392,6 +393,15 @@ def fetch_combined_forecast(
         raise ValueError(f"Invalid forecast source: {source}")
     return forecast.reset_index(drop=True)
 
+#def simulate_scenarios_forecast(
+#    prices_forecast: pd.DataFrame
+#) -> pd.DataFrame:
+#    """
+#    Simulates scenarioes of forecasts and calculates percentiles.
+#    """
+#
+#    return 
+
 def combine_actuals_and_forecast(
     prices_actual: pd.DataFrame,
     prices_forecast: pd.DataFrame,
@@ -439,7 +449,8 @@ def optimize_ev_charging(
     azimuth: float = AZIMUTH,
     tz: str = TZ,
     charge_eff: float = CHARGE_EFF,
-    refusion: float = REFUSION
+    refusion: float = REFUSION,
+    solar_max_kwh: float = SOLAR_MAX_KWH
 ) -> pd.DataFrame:
     """
     Optimize EV charging schedule given trips, prices, and system parameters.
@@ -576,8 +587,8 @@ def optimize_ev_charging(
     if np.isnan(irr_q_vals).all():
         raise RuntimeError("Irradiance alignment error: all NaN after reindexing to timeline.")
 
-    # Convert W/m² → kWh per 15-min slot: (W/m² / 1000) * area * panel_eff * solar_eff * 0.25h
-    solar_energy_q = (irr_q_vals / 1000.0) * panel_area * panel_eff * solar_eff * 0.25
+    # Convert W/m² → kWh per 15-min slot: (W/m² / 1000) * area * panel_eff * solar_eff * 0.25h. Use theoretical max value as cap.
+    solar_energy_q = min((irr_q_vals / 1000.0) * panel_area * panel_eff * solar_eff * 0.25, solar_max_kwh * 0.25)
 
     df["irradiance"]   = irr_q_vals
     df["solar_energy"] = solar_energy_q
@@ -790,14 +801,6 @@ df_out["effective_price_kr_per_kwh_drawn"] = (
     df_out["cost_kr"] / df_out["total_charge_kwh"].replace(0, np.nan)
 )
 
-# If you want to apply REFUSION credit for solar used (value you gave as REFUSION [kr/kWh]),
-# incorporate it as a negative cost for solar_kWh used (visual only; the solver was not
-# informed of this). REFUSION variable in your script is in kr/kWh? If REFUSION is kr/kWh:
-df_out["effective_net_cost_kr"] = df_out["cost_kr"] - (df_out["solar_charge_kwh"] * REFUSION)
-df_out["effective_price_kr_per_kwh_drawn_with_refusion"] = (
-    df_out["effective_net_cost_kr"] / df_out["total_charge_kwh"].replace(0, np.nan)
-)
-
 mask_events = (
     (df_out["trip_kwh_at_departure"].values > 0) |
     (df_out["grid_charge_kwh"].values > 0) |
@@ -806,8 +809,8 @@ mask_events = (
 
 log("\n=== Optimal Charging & Trip Events (15-min) ===")
 header = (
-    f"{'datetime_local':<16} | {'weekday':<9} | {'hour':<2} | {'minute':<2} | {'irradiance':<10} | "
-    f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'eff_price_kr_ref/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
+    f"{'datetime_local':<16} | {'weekday':<9} | {'irradiance':<10} | "
+    f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
     f"{'amp':>3} | {'trip_kWh':>8} | {'sc_kwh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
 )
 log(header)
@@ -817,12 +820,9 @@ for _, row in df_out.loc[mask_events].iterrows():
     log(
         f"{row['datetime_local']:%Y-%m-%d %H:%M} | "
         f"{row['weekday']:<9} | "
-        f"{int(row['hour']):<4d} | "
-        f"{int(row['minute']):<6d} | "
         f"{row['irradiance']:>10.0f} | "
         f"{row['price_kr_per_kwh']:>12.2f} | "
         f"{row['effective_price_kr_per_kwh_drawn']:>16.2f} | "
-        f"{row['effective_price_kr_per_kwh_drawn_with_refusion']:>20.2f} | "
         f"{row['grid_charge_kwh']:>8.2f} | "
         f"{row['solar_charge_kwh']:>9.2f} | "
         f"{row['total_charge_kwh']:>9.2f} | "
@@ -1015,36 +1015,6 @@ notify, reason = should_notify(current_amp, last_amp)
 save_target_soc(current_row["soc_pct_after"]/100)
 save_last_amp(current_amp)
 
-def format_charge_plan_simple(df, mask_events, max_rows=24):
-    """
-    Returns a string summary of the charge plan (first max_rows rows with events).
-    Columns: weekday, hour, minute, amps, effective_price_kr_per_kwh_drawn_with_refusion, soc_pct_before, soc_pct_after
-    """
-    cols = [
-        "weekday", "hour", "minute", "amp",
-        "effective_price_kr_per_kwh_drawn_with_refusion",
-        "soc_pct_before", "soc_pct_after"
-    ]
-    df_short = df.loc[mask_events, cols].copy().head(max_rows)
-    lines = []
-    header = (
-        f"{'weekday':<9} | {'hour':>2} | {'minute':>2} | {'amp':>4} | "
-        f"{'eff_price_kr/kWh':>20} | {'SoC% before':>11} | {'SoC% after':>10}"
-    )
-    lines.append(header)
-    lines.append("-" * len(header))
-    for _, row in df_short.iterrows():
-        lines.append(
-            f"{row['weekday']:<9} | "
-            f"{int(row['hour']):2d} | "
-            f"{int(row['minute']):2d} | "
-            f"{int(row['amp']):4d} | "
-            f"{row['effective_price_kr_per_kwh_drawn_with_refusion']:20.2f} | "
-            f"{row['soc_pct_before']:11.1f} | "
-            f"{row['soc_pct_after']:10.1f}"
-        )
-    return "\n".join(lines)
-
 # Always send email at 21:00 (local TZ)
 FORCED_SEND_HOUR = 21
 FORCED_SEND_MINUTE = 0
@@ -1072,10 +1042,6 @@ if notify or forced_send:
         if log_lines:
             body += "\n\n=== Status & Log ===\n"
             body += "\n".join(log_lines)
-
-        # Add charge plan table (simple version)
-        body += "\n\n=== Optimal Charging & Trip Events (15-min) ===\n"
-        body += format_charge_plan_simple(df_out, mask_events, max_rows=24)
 
         send_email_notification(
             subject=subject,
