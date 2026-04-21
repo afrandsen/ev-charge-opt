@@ -408,7 +408,7 @@ def fetch_epex_forecast_dkk(
         "region": "DK1",
         "evaluation": False,
         "unit": "EUR_PER_MWH",
-        "hourly": False,
+        "hourly": True,
         "timezone": "Europe/Copenhagen"
     }
     for attempt in range(1, attempts + 1):
