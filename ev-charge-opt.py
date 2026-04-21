@@ -588,7 +588,7 @@ def optimize_ev_charging(
         raise RuntimeError("Irradiance alignment error: all NaN after reindexing to timeline.")
 
     # Convert W/m² → kWh per 15-min slot: (W/m² / 1000) * area * panel_eff * solar_eff * 0.25h. Use theoretical max value as cap.
-    solar_energy_q = min((irr_q_vals / 1000.0) * panel_area * panel_eff * solar_eff * 0.25, solar_max_kwh * 0.25)
+    solar_energy_q = np.minimum((irr_q_vals / 1000.0) * panel_area * panel_eff * solar_eff * 0.25, solar_max_kwh * 0.25)
 
     df["irradiance"]   = irr_q_vals
     df["solar_energy"] = solar_energy_q
