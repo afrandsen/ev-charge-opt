@@ -845,90 +845,19 @@ from_grid_stored  = float(df_out["grid_to_batt_kwh"].sum())
 from_solar_stored = float(df_out["solar_to_batt_kwh"].sum())
 total_stored      = float(df_out["total_to_batt_kwh"].sum())
 
-# Effective cost (your logic kept: refusion applied to solar 'drawn')
-effective_cost = total_cost - from_solar_drawn * REFUSION
-
 # Averages per kWh drawn and per kWh stored (both useful)
 avg_cost_per_kWh_drawn  = (total_cost / total_drawn) if total_drawn > 0 else float("nan")
 avg_cost_per_kWh_stored = (total_cost / total_stored) if total_stored > 0 else float("nan")
-
-avg_eff_per_kWh_drawn  = (effective_cost / total_drawn) if total_drawn > 0 else float("nan")
-avg_eff_per_kWh_stored = (effective_cost / total_stored) if total_stored > 0 else float("nan")
 
 
 df_out["date"] = df_out["datetime_local"].dt.date
 df_out["weekday"] = df_out["datetime_local"].dt.day_name()
 
-daily_summary = df_out.groupby(["date", "weekday"]).agg(
-    grid_drawn_kWh=("grid_charge_kwh", "sum"),
-    solar_drawn_kWh=("solar_charge_kwh", "sum"),
-    total_drawn_kWh=("total_charge_kwh", "sum"),
-    grid_stored_kWh=("grid_to_batt_kwh", "sum"),
-    solar_stored_kWh=("solar_to_batt_kwh", "sum"),
-    total_stored_kWh=("total_to_batt_kwh", "sum"),
-    trip_kWh=("trip_kwh_at_departure", "sum"),
-    cost=("cost_kr", "sum"),
-).reset_index()
-
-# SoC start/end
-soc_start = (
-    df_out.sort_values("datetime_local")
-    .groupby("date")["soc_pct_before"]
-    .first()
-)
-soc_end = (
-    df_out.sort_values("datetime_local")
-    .groupby("date")["soc_pct_after"]
-    .last()
-)
-
-daily_summary["soc_start"] = daily_summary["date"].map(soc_start)
-daily_summary["soc_end"] = daily_summary["date"].map(soc_end)
-
-# Effective cost (refusion on solar drawn)
-daily_summary["effective_cost"] = daily_summary["cost"] - daily_summary["solar_drawn_kWh"] * REFUSION
-
-# Average costs per kWh (drawn vs stored)
-daily_summary["cost_per_kWh_drawn"]  = daily_summary["cost"] / daily_summary["total_drawn_kWh"].replace(0, np.nan)
-daily_summary["cost_per_kWh_stored"] = daily_summary["cost"] / daily_summary["total_stored_kWh"].replace(0, np.nan)
-
-daily_summary["eff_cost_per_kWh_drawn"]  = daily_summary["effective_cost"] / daily_summary["total_drawn_kWh"].replace(0, np.nan)
-daily_summary["eff_cost_per_kWh_stored"] = daily_summary["effective_cost"] / daily_summary["total_stored_kWh"].replace(0, np.nan)
-
-
-# log
-log("\n=== Daily Summary ===")
-header = (
-    f"{'date':<10} | {'weekday':<9} | {'grid_kWh':>8} | {'solar_kWh':>8} | "
-    f"{'total_kWh':>8} | {'trip_kWh':>8} | {'soc_start%':>9} | {'soc_end%':>7} | "
-    f"{'cost':>8} | {'eff_cost':>10} | {'avg_cost':>9} | {'avg_eff':>9}"
-)
-log(header)
-log("-" * len(header))
-
-for _, row in daily_summary.iterrows():
-    log(
-        f"{row['date']} | "
-        f"{row['weekday']:<9} | "
-        f"{row['grid_drawn_kWh']:8.2f} | "
-        f"{row['solar_drawn_kWh']:9.2f} | "
-        f"{row['total_drawn_kWh']:9.2f} | "
-        f"{row['trip_kWh']:8.2f} | "
-        f"{row['soc_start']:10.1f} | "
-        f"{row['soc_end']:8.1f} | "
-        f"{row['cost']:8.2f} | "
-        f"{row['effective_cost']:10.2f} | "
-        f"{row['cost_per_kWh_drawn']:9.2f} | "
-        f"{row['eff_cost_per_kWh_drawn']:9.2f}"
-    )
-
 log(
     f"Total cost: {total_cost:.2f} kr. "
-    f"Total effective cost: {effective_cost:.2f} kr. "
     f"Energy drawn: {total_drawn:.2f} kWh ({from_grid_drawn:.2f} grid, {from_solar_drawn:.2f} solar). "
     f"Energy stored: {total_stored:.2f} kWh ({from_grid_stored:.2f} grid, {from_solar_stored:.2f} solar). "
     f"Avg cost: {avg_cost_per_kWh_drawn:.2f} kr/kWh drawn, {avg_cost_per_kWh_stored:.2f} kr/kWh stored. "
-    f"Eff. avg: {avg_eff_per_kWh_drawn:.2f} (drawn), {avg_eff_per_kWh_stored:.2f} (stored)."
 )
 
 # --- Notification Logic ---
