@@ -33,6 +33,9 @@ PHASES = 3
 SOLAR_EFF = 0.97
 PANEL_AREA = 11.5
 PANEL_EFF = 0.2046
+NOCT_C = 41.0
+PANEL_TEMP_BETA = 0.003
+PANEL_TEMP_REF_C = 25.0
 SOLAR_MAX_KWH = 2.5
 SYSTEMTARIF = 0.09000
 NETTARIF_TSO = 0.05375
@@ -657,10 +660,60 @@ def optimize_ev_charging(
     if np.isnan(irr_q_vals).all():
         raise RuntimeError("Irradiance alignment error: all NaN after reindexing to timeline.")
 
-    # Convert W/m² → kWh per 15-min slot: (W/m² / 1000) * area * panel_eff * solar_eff * 0.25h. Use theoretical max value as cap.
-    solar_energy_q = np.minimum((irr_q_vals / 1000.0) * panel_area * panel_eff * solar_eff * 0.25, solar_max_kwh * 0.25)
+    # Fetch air temperature from Open-Meteo at 15-min resolution with hourly fallback
+    url_temp_15 = f"{base}{common}&minutely_15=temperature_2m"
+    ttemp15, vtemp15 = _fetch_open_meteo_with_retries(
+        url_temp_15,
+        ["minutely_15", "temperature_2m"],
+        attempts=5,
+        sleep_sec=2
+    )
+    url_temp_h = f"{base}{common}&hourly=temperature_2m"
+    ttemph, vtemph = _fetch_open_meteo_with_retries(
+        url_temp_h,
+        ["hourly", "temperature_2m"],
+        attempts=5,
+        sleep_sec=2
+    )
+
+    ser_temp_15 = _align_gti_to_quarters(ttemp15, vtemp15, tz, repeat_to_quarters=False) if ttemp15 is not None else None
+    ser_temp_h = _align_gti_to_quarters(ttemph, vtemph, tz, repeat_to_quarters=True) if ttemph is not None else None
+
+    if ser_temp_15 is not None and ser_temp_h is not None:
+        ser_temp_q = ser_temp_15.combine_first(ser_temp_h)
+        temp_source = "minutely_15 + hourly fallback"
+    elif ser_temp_15 is not None:
+        ser_temp_q = ser_temp_15
+        temp_source = "minutely_15"
+    elif ser_temp_h is not None:
+        ser_temp_q = ser_temp_h
+        temp_source = "hourly (upsampled to 15-min)"
+    else:
+        log("⚠️ Open-Meteo temperature unavailable, falling back to reference panel efficiency")
+        temp_q_vals = np.full_like(irr_q_vals, PANEL_TEMP_REF_C, dtype=float)
+        ser_temp_q = None
+
+    if ser_temp_q is not None:
+        temp_q_vals = ser_temp_q.reindex(df["datetime_local"]).values
+        if np.isnan(temp_q_vals).all():
+            log("⚠️ Temperature alignment error: all NaN after reindexing to timeline. Falling back to reference panel efficiency")
+            temp_q_vals = np.full_like(irr_q_vals, PANEL_TEMP_REF_C, dtype=float)
+        else:
+            temp_q_vals = np.where(np.isnan(temp_q_vals), PANEL_TEMP_REF_C, temp_q_vals)
+        log(f"✅ Using Open-Meteo temperature source: {temp_source}")
+
+    # Convert air temp and irradiance to panel temperature and temperature-dependent efficiency
+    panel_temp_q = temp_q_vals + ((NOCT_C - 20.0) / 800.0) * irr_q_vals
+    panel_eff_q = panel_eff * (1.0 - PANEL_TEMP_BETA * (panel_temp_q - PANEL_TEMP_REF_C))
+    panel_eff_q = np.clip(panel_eff_q, 0.0, 1.0)
+
+    # Convert W/m² → kWh per 15-min slot: (W/m² / 1000) * area * panel_eff(T) * solar_eff * 0.25h.
+    solar_energy_q = np.minimum((irr_q_vals / 1000.0) * panel_area * panel_eff_q * solar_eff * 0.25, solar_max_kwh * 0.25)
 
     df["irradiance"]   = irr_q_vals
+    df["temperature_2m"] = temp_q_vals
+    df["panel_temp_c"] = panel_temp_q
+    df["panel_efficiency"] = panel_eff_q
     df["solar_energy"] = solar_energy_q
 
     log(f"✅ Using Open-Meteo irradiance source: {source_used}")
