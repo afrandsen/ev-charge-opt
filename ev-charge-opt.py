@@ -27,7 +27,7 @@ def log(msg):
 # --- Constants & Configuration ---
 BATTERY_KWH = 75
 CHARGER_KW = 11
-CHARGER_MIN_A = 6
+CHARGER_MIN_A = 5
 CHARGER_VOLT = 400
 PHASES = 3
 SOLAR_EFF = 0.97
@@ -592,11 +592,36 @@ def optimize_ev_charging(
     H = len(df)
     assert df.index.min() == 0, "Index not starting at 0 after reset!"
 
-    # --- Parse trip times (accept HH:MM) ---
+    # --- Parse trip times (accept various time formats) ---
     trips = trips.copy()
+    def parse_time_str(s):
+        if pd.isna(s) or s is None:
+            return None
+        if isinstance(s, str):
+            # Try %H:%M
+            try:
+                return datetime.strptime(s, "%H:%M").time()
+            except ValueError:
+                pass
+            # Try %H:%M:%S
+            try:
+                return datetime.strptime(s, "%H:%M:%S").time()
+            except ValueError:
+                pass
+            # Try full datetime string
+            try:
+                dt = pd.to_datetime(s)
+                return dt.time()
+            except (ValueError, TypeError):
+                pass
+        # If already time object
+        if hasattr(s, 'hour'):
+            return s
+        return None
+
     for col in ["away_start", "away_end"]:
         if trips[col].dtype == object:
-            trips[col] = pd.to_datetime(trips[col], format="%H:%M").dt.time
+            trips[col] = trips[col].apply(parse_time_str)
 
     # --- Availability ---
     available = np.ones(H, dtype=int)
