@@ -620,12 +620,13 @@ def optimize_ev_charging(
         return None
 
     for col in ["away_start", "away_end"]:
-        if trips[col].dtype == object:
-            trips[col] = trips[col].apply(parse_time_str)
+        trips[col] = trips[col].apply(parse_time_str)
 
     # --- Availability ---
     available = np.ones(H, dtype=int)
     for _, t in trips.iterrows():
+        if pd.isna(t["away_start"]) or pd.isna(t["away_end"]):
+            continue
         idx_day = np.where(df["wday_label"].values == t["day"].lower())[0]
         start_minutes = t["away_start"].hour * 60 + t["away_start"].minute
         end_minutes   = t["away_end"].hour * 60 + t["away_end"].minute
