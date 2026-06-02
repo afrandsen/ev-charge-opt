@@ -91,8 +91,8 @@ token_id = os.getenv("SOLAX_TOKEN_ID")
 wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
-SOFT_SOC_WINDOW_HOURS = float(os.getenv("SOFT_SOC_WINDOW_HOURS", "6"))
-SOFT_SOC_ABS_MAX_PCT = float(os.getenv("SOFT_SOC_ABS_MAX_PCT", "0.95"))
+SOFT_SOC_WINDOW_HOURS = float(os.getenv("SOFT_SOC_WINDOW_HOURS", "3"))
+SOFT_SOC_ABS_MAX_PCT = float(os.getenv("SOFT_SOC_ABS_MAX_PCT", "1.0"))
 
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
 now_minutes = now_slot.hour * 60 + now_slot.minute
