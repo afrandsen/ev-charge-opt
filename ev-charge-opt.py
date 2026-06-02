@@ -91,6 +91,8 @@ token_id = os.getenv("SOLAX_TOKEN_ID")
 wifi_sn = os.getenv("SOLAX_WIFI_SN")
 carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
+SOFT_SOC_WINDOW_HOURS = float(os.getenv("SOFT_SOC_WINDOW_HOURS", "6"))
+SOFT_SOC_ABS_MAX_PCT = float(os.getenv("SOFT_SOC_ABS_MAX_PCT", "0.95"))
 
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
 now_minutes = now_slot.hour * 60 + now_slot.minute
@@ -523,7 +525,9 @@ def optimize_ev_charging(
     tz: str = TZ,
     charge_eff: float = CHARGE_EFF,
     refusion: float = REFUSION,
-    solar_max_kwh: float = SOLAR_MAX_KWH
+    solar_max_kwh: float = SOLAR_MAX_KWH,
+    soft_soc_window_hours: float = SOFT_SOC_WINDOW_HOURS,
+    soft_soc_abs_max_pct: float = SOFT_SOC_ABS_MAX_PCT,
 ) -> pd.DataFrame:
     """
     Optimize EV charging schedule given trips, prices, and system parameters.
@@ -541,6 +545,8 @@ def optimize_ev_charging(
     SOC_MAX = battery_kwh * soc_max_pct
     SOC0    = battery_kwh * initial_soc_pct
     FLAT_ADDERS = systemtarif + nettarif_tso + elafgift + TILLAEG
+    soft_soc_window_hours = max(0.0, float(soft_soc_window_hours))
+    soft_soc_abs_max_pct = min(1.0, max(float(soc_max_pct), float(soft_soc_abs_max_pct)))
 
     # --- Build timeline & prices ---
     df = pd.DataFrame({"datetime_utc": prices["date"]})
@@ -747,7 +753,7 @@ def optimize_ev_charging(
     # Override current slot with inverter data if possible
     df = override_with_inverter(df, tz, token_id, wifi_sn)
 
-    soc_max_vec = np.full(H, SOC_MAX)  # default global max
+    hard_soc_max_vec = np.full(H, SOC_MAX)  # default global max
 
     for _, t in trips.iterrows():
         # only apply if a per-trip max SOC is defined
@@ -772,11 +778,12 @@ def optimize_ev_charging(
                     if len(idx_end) >= 1 and idx_end[0] < h_dep:
                         last_end = max(last_end, idx_end[0])
 
-                soc_max_vec[last_end:h_dep+1] = trip_max
+                hard_soc_max_vec[last_end:h_dep+1] = trip_max
 
     # --- Trip energy vector ---
     trip_energy_vec = np.zeros(H)
     sc_energy_vec = np.zeros(H)
+    trip_departures = []
     for _, t in trips.iterrows():
         need_kwh = (float(t["trip_kwh"]) if pd.notna(t["trip_kwh"]) else float(t["distance_km"]) * eff_kwh_per_km)
 
@@ -793,12 +800,35 @@ def optimize_ev_charging(
         log(f"datetime at matched pos(s): {df.loc[idx_dep, 'datetime_local'].tolist()}")
         if len(idx_dep) >= 1:
             h_dep = idx_dep[0]
-            trip_energy_vec[idx_dep[0]] += need_kwh
+            trip_energy_vec[h_dep] += need_kwh
+            trip_departures.append((h_dep, max(0.0, need_kwh)))
             if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
-                sc_energy_vec[idx_dep[0]] += float(t["supercharge_kwh"])
-        if SOC_MIN + need_kwh > soc_max_vec[h_dep]:
-            log(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
-            raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
+                sc_energy_vec[h_dep] += float(t["supercharge_kwh"])
+            if SOC_MIN + need_kwh > hard_soc_max_vec[h_dep]:
+                log(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
+                raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
+
+    # --- Soft SOC max window before departures ---
+    # Allow temporary overcharge only shortly before a trip, and penalize holding it.
+    soft_extra_cap_vec = np.zeros(H)
+    soft_window_slots = int(round(soft_soc_window_hours * 4.0))
+    for h_dep, dep_trip_kwh in trip_departures:
+        if dep_trip_kwh <= 0.0 or soft_window_slots <= 0 or h_dep <= 0:
+            continue
+        start_idx = max(0, h_dep - soft_window_slots)
+        soft_extra_cap_vec[start_idx:h_dep] = np.maximum(
+            soft_extra_cap_vec[start_idx:h_dep], dep_trip_kwh
+        )
+
+    soft_soc_abs_kwh = battery_kwh * soft_soc_abs_max_pct
+    soc_ub_vec = np.minimum(hard_soc_max_vec + soft_extra_cap_vec, soft_soc_abs_kwh)
+    soc_ub_vec = np.maximum(soc_ub_vec, hard_soc_max_vec)
+
+    log(
+        "Soft SOC max enabled: "
+        f"window={soft_soc_window_hours:.2f}h, "
+        f"abs_max={soft_soc_abs_max_pct*100:.1f}%"
+    )
 
     # --- Build MILP ---
     cap_per_quarter = charger_kw * 0.25
@@ -813,7 +843,7 @@ def optimize_ev_charging(
         soc[h] = pulp.LpVariable(
             f"soc_{h}",
             lowBound=low,
-            upBound=soc_max_vec[h],
+            upBound=float(soc_ub_vec[h]),
             cat=pulp.LpContinuous
         )
     # z: session active binary per quarter
@@ -862,6 +892,7 @@ def optimize_ev_charging(
     grid_opt  = np.array([pulp.value(grid[h])  for h in range(H)])
     solar_opt = np.array([pulp.value(solar[h]) for h in range(H)])
     soc_opt   = np.array([pulp.value(soc[h])   for h in range(H)])
+    over_soft_max_opt = np.maximum(soc_opt - hard_soc_max_vec, 0.0)
 
     # Derived “stored in battery” (post-losses)
     grid_to_batt  = grid_opt  * charge_eff
@@ -892,6 +923,10 @@ def optimize_ev_charging(
 
         "irradiance": df["irradiance"].values,
         "soc_kwh": np.round(soc_opt, 3),
+        "hard_soc_max_kwh": np.round(hard_soc_max_vec, 3),
+        "soft_soc_extra_cap_kwh": np.round(soft_extra_cap_vec, 3),
+        "soc_upper_bound_kwh": np.round(soc_ub_vec, 3),
+        "soft_soc_over_kwh": np.round(over_soft_max_opt, 3),
 
         # Cost (only grid is paid here)
         "cost_kr": np.round(grid_opt * df["total_price_kr_kwh"].values, 4),
@@ -914,7 +949,10 @@ try:
     LAT, LON, TILT, AZIMUTH,
     TZ,
     CHARGE_EFF,
-    REFUSION
+    REFUSION,
+    SOLAR_MAX_KWH,
+    SOFT_SOC_WINDOW_HOURS,
+    SOFT_SOC_ABS_MAX_PCT,
 )
 except RuntimeError as e:
     send_email_notification(
