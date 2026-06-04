@@ -93,6 +93,8 @@ carnot_apikey = os.getenv("CARNOT_APIKEY")
 carnot_username = os.getenv("CARNOT_USERNAME")
 SOFT_SOC_WINDOW_HOURS = float(os.getenv("SOFT_SOC_WINDOW_HOURS", "3"))
 SOFT_SOC_ABS_MAX_PCT = float(os.getenv("SOFT_SOC_ABS_MAX_PCT", "1.0"))
+SOFT_SOC_MIN_WINDOW_HOURS = float(os.getenv("SOFT_SOC_MIN_WINDOW_HOURS", "0"))
+SOFT_SOC_ABS_MIN_PCT = float(os.getenv("SOFT_SOC_ABS_MIN_PCT", "0.0"))
 
 now_slot = pd.Timestamp.now(tz=TZ).floor("15min")
 now_minutes = now_slot.hour * 60 + now_slot.minute
@@ -528,6 +530,8 @@ def optimize_ev_charging(
     solar_max_kwh: float = SOLAR_MAX_KWH,
     soft_soc_window_hours: float = SOFT_SOC_WINDOW_HOURS,
     soft_soc_abs_max_pct: float = SOFT_SOC_ABS_MAX_PCT,
+    soft_soc_min_window_hours: float = SOFT_SOC_MIN_WINDOW_HOURS,
+    soft_soc_abs_min_pct: float = SOFT_SOC_ABS_MIN_PCT,
 ) -> pd.DataFrame:
     """
     Optimize EV charging schedule given trips, prices, and system parameters.
@@ -547,6 +551,8 @@ def optimize_ev_charging(
     FLAT_ADDERS = systemtarif + nettarif_tso + elafgift + TILLAEG
     soft_soc_window_hours = max(0.0, float(soft_soc_window_hours))
     soft_soc_abs_max_pct = min(1.0, max(float(soc_max_pct), float(soft_soc_abs_max_pct)))
+    soft_soc_min_window_hours = max(0.0, float(soft_soc_min_window_hours))
+    soft_soc_abs_min_pct = min(float(soc_min_pct), max(0.0, float(soft_soc_abs_min_pct)))
 
     # --- Build timeline & prices ---
     df = pd.DataFrame({"datetime_utc": prices["date"]})
@@ -809,7 +815,7 @@ def optimize_ev_charging(
                 raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
     # --- Soft SOC max window before departures ---
-    # Allow temporary overcharge only shortly before a trip, and penalize holding it.
+    # Allow temporary overcharge only shortly before a trip.
     soft_extra_cap_vec = np.zeros(H)
     soft_window_slots = int(round(soft_soc_window_hours * 4.0))
     for h_dep, dep_trip_kwh in trip_departures:
@@ -824,10 +830,30 @@ def optimize_ev_charging(
     soc_ub_vec = np.minimum(hard_soc_max_vec + soft_extra_cap_vec, soft_soc_abs_kwh)
     soc_ub_vec = np.maximum(soc_ub_vec, hard_soc_max_vec)
 
+    # Allow temporary dip below SOC_MIN only shortly after a trip.
+    soft_min_relax_vec = np.zeros(H)
+    soft_min_window_slots = int(round(soft_soc_min_window_hours * 4.0))
+    for h_dep, dep_trip_kwh in trip_departures:
+        if dep_trip_kwh <= 0.0 or soft_min_window_slots <= 0:
+            continue
+        end_idx = min(H, h_dep + soft_min_window_slots + 1)
+        soft_min_relax_vec[h_dep:end_idx] = np.maximum(
+            soft_min_relax_vec[h_dep:end_idx], dep_trip_kwh
+        )
+
+    soft_soc_abs_min_kwh = battery_kwh * soft_soc_abs_min_pct
+    soc_lb_vec = np.maximum(SOC_MIN - soft_min_relax_vec, soft_soc_abs_min_kwh)
+    soc_lb_vec = np.minimum(soc_lb_vec, SOC_MIN)
+
     log(
         "Soft SOC max enabled: "
         f"window={soft_soc_window_hours:.2f}h, "
         f"abs_max={soft_soc_abs_max_pct*100:.1f}%"
+    )
+    log(
+        "Soft SOC min enabled: "
+        f"window={soft_soc_min_window_hours:.2f}h, "
+        f"abs_min={soft_soc_abs_min_pct*100:.1f}%"
     )
 
     # --- Build MILP ---
@@ -839,7 +865,7 @@ def optimize_ev_charging(
     first_trip_idx = np.where(trip_energy_vec > 0)[0]
     soc = {}
     for h in range(H):
-        low = SOC0 if h == 0 or h < first_trip_idx[0] else SOC_MIN
+        low = SOC0 if h == 0 or h < first_trip_idx[0] else float(soc_lb_vec[h])
         soc[h] = pulp.LpVariable(
             f"soc_{h}",
             lowBound=low,
@@ -880,7 +906,7 @@ def optimize_ev_charging(
     trip_rows = np.where(trip_energy_vec > 0)[0]
     for h in trip_rows:
         if h > 0:
-            prob += soc[h-1] >= SOC_MIN + float(trip_energy_vec[h])
+            prob += soc[h-1] >= float(soc_lb_vec[h]) + float(trip_energy_vec[h])
 
     solver = pulp.PULP_CBC_CMD(msg=False)
     res_status = prob.solve(solver)
@@ -893,6 +919,7 @@ def optimize_ev_charging(
     solar_opt = np.array([pulp.value(solar[h]) for h in range(H)])
     soc_opt   = np.array([pulp.value(soc[h])   for h in range(H)])
     over_soft_max_opt = np.maximum(soc_opt - hard_soc_max_vec, 0.0)
+    under_soft_min_opt = np.maximum(SOC_MIN - soc_opt, 0.0)
 
     # Derived “stored in battery” (post-losses)
     grid_to_batt  = grid_opt  * charge_eff
@@ -923,6 +950,10 @@ def optimize_ev_charging(
 
         "irradiance": df["irradiance"].values,
         "soc_kwh": np.round(soc_opt, 3),
+        "hard_soc_min_kwh": np.round(np.full(H, SOC_MIN), 3),
+        "soft_soc_min_relax_kwh": np.round(soft_min_relax_vec, 3),
+        "soc_lower_bound_kwh": np.round(soc_lb_vec, 3),
+        "soft_soc_under_kwh": np.round(under_soft_min_opt, 3),
         "hard_soc_max_kwh": np.round(hard_soc_max_vec, 3),
         "soft_soc_extra_cap_kwh": np.round(soft_extra_cap_vec, 3),
         "soc_upper_bound_kwh": np.round(soc_ub_vec, 3),
@@ -953,6 +984,8 @@ try:
     SOLAR_MAX_KWH,
     SOFT_SOC_WINDOW_HOURS,
     SOFT_SOC_ABS_MAX_PCT,
+    SOFT_SOC_MIN_WINDOW_HOURS,
+    SOFT_SOC_ABS_MIN_PCT,
 )
 except RuntimeError as e:
     send_email_notification(
