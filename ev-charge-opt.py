@@ -6,10 +6,15 @@ import os
 import json
 import time
 import math
+import re
 import requests
 import numpy as np
 import pandas as pd
 import pulp
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
 from datetime import datetime, timedelta
 from pytz import timezone
 from pandas.api.types import is_datetime64_any_dtype
@@ -45,6 +50,13 @@ REFUSION = 0.0
 TILT = 25
 AZIMUTH = 0
 TZ = "Europe/Copenhagen"
+TM_DB_NAME = os.getenv("TM_DB_NAME", "teslamate")
+TM_DB_USER = os.getenv("TM_DB_USER", "teslamate")
+TM_DB_PASSWORD = os.getenv("TM_DB_PASSWORD", "")
+TM_DB_HOST = os.getenv("TM_DB_HOST", "")
+TM_DB_PORT = int(os.getenv("TM_DB_PORT", "5432"))
+TM_DB_SSLMODE = os.getenv("TM_DB_SSLMODE", "prefer")
+TM_DB_SCHEMA = os.getenv("TM_DB_SCHEMA", "history")
 
 # --- Environment Variables ---
 if len(sys.argv) < 2:
@@ -137,6 +149,157 @@ if IS_HOME:
                 trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
+def _to_sql_timestamp(ts: pd.Timestamp) -> str:
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts.isoformat()
+
+
+def _valid_pg_identifier(name: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name or ""))
+
+
+def _history_table(base_table: str):
+    if not _valid_pg_identifier(TM_DB_SCHEMA):
+        log("⚠️ Direct Postgres write failed: TM_DB_SCHEMA must be a valid Postgres identifier")
+        return None
+    if not _valid_pg_identifier(base_table):
+        log("⚠️ Direct Postgres write failed: invalid history table identifier")
+        return None
+    return f"{TM_DB_SCHEMA}.{base_table}"
+
+
+def _run_psql_direct(sql: str) -> bool:
+    """
+    Execute SQL directly against Postgres using host/port credentials.
+    Returns True on success, False on failure.
+    """
+    if psycopg2 is None:
+        log("⚠️ Direct Postgres write failed: psycopg2 not installed")
+        return False
+    if not TM_DB_HOST:
+        log("⚠️ Direct Postgres write failed: TM_DB_HOST is not set")
+        return False
+
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            dbname=TM_DB_NAME,
+            user=TM_DB_USER,
+            password=TM_DB_PASSWORD,
+            host=TM_DB_HOST,
+            port=TM_DB_PORT,
+            sslmode=TM_DB_SSLMODE,
+            connect_timeout=5,
+        )
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql)
+        return True
+    except Exception as e:
+        log(f"⚠️ Direct Postgres write failed: {e}")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _run_psql(sql: str) -> bool:
+    """
+    Execute SQL directly against Postgres.
+    """
+    return _run_psql_direct(sql)
+
+
+def ensure_history_tables() -> bool:
+    solax_table = _history_table("ev_charge_opt_solax_ac_power_15m")
+    nordpool_table = _history_table("ev_charge_opt_nordpool_spot_price_15m")
+    if not solax_table or not nordpool_table:
+        return False
+
+    sql = f"""
+    CREATE SCHEMA IF NOT EXISTS {TM_DB_SCHEMA};
+
+    CREATE TABLE IF NOT EXISTS {solax_table} (
+        slot_utc timestamptz PRIMARY KEY,
+        ac_power_w double precision NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS {nordpool_table} (
+        slot_utc timestamptz PRIMARY KEY,
+        price_ore_per_kwh double precision NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    """
+    return _run_psql(sql)
+
+
+def save_solax_ac_power_15m(slot_local: pd.Timestamp, ac_power_w: float) -> bool:
+    solax_table = _history_table("ev_charge_opt_solax_ac_power_15m")
+    if not solax_table:
+        return False
+
+    slot_utc = _to_sql_timestamp(slot_local)
+    sql = f"""
+    INSERT INTO {solax_table} (slot_utc, ac_power_w)
+    VALUES ('{slot_utc}'::timestamptz, {float(ac_power_w)})
+    ON CONFLICT (slot_utc) DO UPDATE
+    SET ac_power_w = EXCLUDED.ac_power_w,
+        updated_at = now();
+    """
+    return _run_psql(sql)
+
+
+def _expand_hourly_prices_to_quarters(prices_hourly: pd.DataFrame) -> pd.DataFrame:
+    """
+    Expand hourly spot prices to 15-minute resolution by repeating each hourly value.
+    """
+    if prices_hourly.empty:
+        return pd.DataFrame(columns=["slot_utc", "price_ore_per_kwh"])
+
+    df = prices_hourly[["date", "price"]].copy()
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+
+    repeated = df.loc[df.index.repeat(4)].copy().reset_index(drop=True)
+    repeated["slot_utc"] = repeated["date"] + pd.to_timedelta(
+        np.tile([0, 15, 30, 45], len(df)),
+        unit="m",
+    )
+    repeated.rename(columns={"price": "price_ore_per_kwh"}, inplace=True)
+    return repeated[["slot_utc", "price_ore_per_kwh"]]
+
+
+def save_nordpool_spot_price_15m(prices_hourly: pd.DataFrame) -> bool:
+    nordpool_table = _history_table("ev_charge_opt_nordpool_spot_price_15m")
+    if not nordpool_table:
+        return False
+
+    expanded = _expand_hourly_prices_to_quarters(prices_hourly)
+    if expanded.empty:
+        log("⚠️ No Nordpool prices available to persist")
+        return False
+
+    values_sql = []
+    for row in expanded.itertuples(index=False):
+        slot_utc = _to_sql_timestamp(pd.Timestamp(row.slot_utc))
+        values_sql.append(f"('{slot_utc}'::timestamptz, {float(row.price_ore_per_kwh)})")
+
+    sql = f"""
+    INSERT INTO {nordpool_table} (slot_utc, price_ore_per_kwh)
+    VALUES
+    """ + ",\n".join(values_sql) + """
+    ON CONFLICT (slot_utc) DO UPDATE
+    SET price_ore_per_kwh = EXCLUDED.price_ore_per_kwh,
+        updated_at = now();
+    """
+    return _run_psql(sql)
+
+
 def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
     msg = MIMEMultipart()
     msg["From"] = sender
@@ -247,6 +410,9 @@ def override_with_inverter(
                     )
                 else:
                     log(f"⚠️ Current slot {now_slot} not in df timeline")
+
+                if save_solax_ac_power_15m(now_slot, ac_power_w):
+                    log(f"✅ Saved Solax AC power history at {now_slot}: {ac_power_w:.1f} W")
                 return df
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
@@ -495,7 +661,10 @@ def combine_actuals_and_forecast(
     return df.reset_index(drop=True)
 
 # --- Data Fetching ---
+ensure_history_tables()
 prices_actual = fetch_dk1_prices_dkk()
+if save_nordpool_spot_price_15m(prices_actual):
+    log(f"✅ Saved Nordpool 15-minute history rows: {len(prices_actual) * 4}")
 prices_forecast = fetch_combined_forecast(source="epex", apikey=carnot_apikey, username=carnot_username)
 prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz=TZ)
 prices = prices.sort_values("date").reset_index(drop=True)

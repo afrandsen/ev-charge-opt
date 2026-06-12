@@ -8,3 +8,4 @@ nordpool
 ics
 icalendar
 recurring_ical_events
+psycopg2-binary
