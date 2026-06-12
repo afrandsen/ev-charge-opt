@@ -143,12 +143,11 @@ if IS_HOME:
                 trips.at[i, "away_end"] = new_end
 
 # --- Utility Functions ---
-def _to_sql_timestamp(ts: pd.Timestamp) -> str:
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    else:
-        ts = ts.tz_convert("UTC")
-    return ts.isoformat()
+def _to_sql_local_timestamp(ts: pd.Timestamp, local_tz: str = TZ) -> str:
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(local_tz).tz_localize(None)
+    return ts.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _valid_pg_identifier(name: str) -> bool:
@@ -211,14 +210,14 @@ def ensure_history_tables() -> bool:
     CREATE SCHEMA IF NOT EXISTS {TM_DB_SCHEMA};
 
     CREATE TABLE IF NOT EXISTS {solax_table} (
-        slot_utc timestamptz PRIMARY KEY,
+        slot_local timestamp PRIMARY KEY,
         solar_kwh_now double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS {nordpool_table} (
-        slot_utc timestamptz PRIMARY KEY,
+        slot_local timestamp PRIMARY KEY,
         spot_price_kr_per_kwh double precision,
         total_price_kr_per_kwh double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
@@ -236,11 +235,11 @@ def save_solax_solar_kwh_15m(slot_local: pd.Timestamp, solar_kwh_now: float) -> 
     if not solax_table:
         return False
 
-    slot_utc = _to_sql_timestamp(slot_local)
+    slot_local_sql = _to_sql_local_timestamp(slot_local)
     sql = f"""
-    INSERT INTO {solax_table} (slot_utc, solar_kwh_now)
-    VALUES ('{slot_utc}'::timestamptz, {float(solar_kwh_now)})
-    ON CONFLICT (slot_utc) DO UPDATE
+    INSERT INTO {solax_table} (slot_local, solar_kwh_now)
+    VALUES ('{slot_local_sql}'::timestamp, {float(solar_kwh_now)})
+    ON CONFLICT (slot_local) DO UPDATE
     SET solar_kwh_now = EXCLUDED.solar_kwh_now,
         updated_at = now();
     """
@@ -286,18 +285,18 @@ def _expand_hourly_total_prices_to_quarters(prices_hourly_total: pd.DataFrame) -
     Expand hourly total prices to 15-minute resolution by repeating each hourly value.
     """
     if prices_hourly_total.empty:
-        return pd.DataFrame(columns=["slot_utc", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"])
+        return pd.DataFrame(columns=["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"])
 
     df = prices_hourly_total[["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"]].copy()
     df["date"] = pd.to_datetime(df["date"], utc=True)
 
     repeated = df.loc[df.index.repeat(4)].copy().reset_index(drop=True)
-    repeated["slot_utc"] = repeated["date"] + pd.to_timedelta(
-        np.tile([0, 15, 30, 45], len(df)),
-        unit="m",
-    )
+    repeated["slot_local"] = (
+        repeated["date"].dt.tz_convert(TZ)
+        + pd.to_timedelta(np.tile([0, 15, 30, 45], len(df)), unit="m")
+    ).dt.tz_localize(None)
     repeated.rename(columns={"spot_kr_per_kwh": "spot_price_kr_per_kwh"}, inplace=True)
-    return repeated[["slot_utc", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]]
+    return repeated[["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]]
 
 
 def save_total_price_15m(prices_hourly_spot: pd.DataFrame) -> bool:
@@ -313,16 +312,16 @@ def save_total_price_15m(prices_hourly_spot: pd.DataFrame) -> bool:
 
     values_sql = []
     for row in expanded.itertuples(index=False):
-        slot_utc = _to_sql_timestamp(pd.Timestamp(row.slot_utc))
+        slot_local_sql = _to_sql_local_timestamp(pd.Timestamp(row.slot_local))
         spot_price = float(row.spot_price_kr_per_kwh)
         total_price = float(row.total_price_kr_per_kwh)
-        values_sql.append(f"('{slot_utc}'::timestamptz, {spot_price}, {total_price})")
+        values_sql.append(f"('{slot_local_sql}'::timestamp, {spot_price}, {total_price})")
 
     sql = f"""
-    INSERT INTO {nordpool_table} (slot_utc, spot_price_kr_per_kwh, total_price_kr_per_kwh)
+    INSERT INTO {nordpool_table} (slot_local, spot_price_kr_per_kwh, total_price_kr_per_kwh)
     VALUES
     """ + ",\n".join(values_sql) + """
-    ON CONFLICT (slot_utc) DO UPDATE
+    ON CONFLICT (slot_local) DO UPDATE
     SET spot_price_kr_per_kwh = EXCLUDED.spot_price_kr_per_kwh,
         total_price_kr_per_kwh = EXCLUDED.total_price_kr_per_kwh,
         updated_at = now();
