@@ -299,13 +299,17 @@ def _expand_hourly_total_prices_to_quarters(prices_hourly_total: pd.DataFrame) -
     return repeated[["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]]
 
 
-def save_total_price_15m(prices_hourly_spot: pd.DataFrame) -> bool:
+def save_total_price_15m(prices_hourly_spot: pd.DataFrame = None, price_slots: pd.DataFrame = None) -> bool:
     nordpool_table = _history_table("ev_charge_opt_nordpool_spot_price_15m")
     if not nordpool_table:
         return False
 
-    prices_hourly_total = _prepare_total_prices_hourly(prices_hourly_spot)
-    expanded = _expand_hourly_total_prices_to_quarters(prices_hourly_total)
+    if price_slots is not None:
+        expanded = price_slots.copy()
+    else:
+        prices_hourly_total = _prepare_total_prices_hourly(prices_hourly_spot)
+        expanded = _expand_hourly_total_prices_to_quarters(prices_hourly_total)
+
     if expanded.empty:
         log("⚠️ No total prices available to persist")
         return False
@@ -440,8 +444,12 @@ def override_with_inverter(
                 else:
                     log(f"⚠️ Current slot {now_slot} not in df timeline")
 
-                if save_solax_solar_kwh_15m(now_slot, solar_kwh_now):
-                    log(f"✅ Saved Solax solar history at {now_slot}: {solar_kwh_now:.3f} kWh")
+                slot_for_save = now_slot
+                if mask.any():
+                    slot_for_save = pd.Timestamp(df.loc[mask, "datetime_local"].iloc[0])
+
+                if save_solax_solar_kwh_15m(slot_for_save, solar_kwh_now):
+                    log(f"✅ Saved Solax solar history at {slot_for_save}: {solar_kwh_now:.3f} kWh")
                 return df
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
@@ -692,8 +700,6 @@ def combine_actuals_and_forecast(
 # --- Data Fetching ---
 ensure_history_tables()
 prices_actual = fetch_dk1_prices_dkk()
-if save_total_price_15m(prices_actual):
-    log(f"✅ Saved total-price 15-minute history rows: {len(prices_actual) * 4}")
 prices_forecast = fetch_combined_forecast(source="epex", apikey=carnot_apikey, username=carnot_username)
 prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz=TZ)
 prices = prices.sort_values("date").reset_index(drop=True)
@@ -801,6 +807,17 @@ def optimize_ev_charging(
     df.reset_index(drop=True, inplace=True)
     H = len(df)
     assert df.index.min() == 0, "Index not starting at 0 after reset!"
+
+    # Persist price history using the exact same local timeline used in charge-plan output.
+    save_total_price_15m(
+        price_slots=df[["datetime_local", "spot_kr_kwh", "total_price_kr_kwh"]].rename(
+            columns={
+                "datetime_local": "slot_local",
+                "spot_kr_kwh": "spot_price_kr_per_kwh",
+                "total_price_kr_kwh": "total_price_kr_per_kwh",
+            }
+        )
+    )
 
     # --- Parse trip times (accept various time formats) ---
     trips = trips.copy()
