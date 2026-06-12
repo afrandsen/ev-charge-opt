@@ -760,6 +760,7 @@ def optimize_ev_charging(
 
     # --- Build timeline & prices ---
     df = pd.DataFrame({"datetime_utc": prices["date"]})
+    df["price_source"] = prices["source"].values if "source" in prices.columns else "unknown"
     df["datetime_local"] = df["datetime_utc"].dt.tz_convert(tz)
     df["wday_label"] = df["datetime_local"].dt.day_name().str.lower()
     df["hour_local"] = df["datetime_local"].dt.hour
@@ -808,15 +809,19 @@ def optimize_ev_charging(
     H = len(df)
     assert df.index.min() == 0, "Index not starting at 0 after reset!"
 
-    # Persist price history using the exact same local timeline used in charge-plan output.
+    # Persist only actual Nordpool prices using the same local timeline used in charge-plan output.
+    price_slots_to_save = df[df["price_source"].eq("Nordpool")][
+        ["datetime_local", "spot_kr_kwh", "total_price_kr_kwh"]
+    ].rename(
+        columns={
+            "datetime_local": "slot_local",
+            "spot_kr_kwh": "spot_price_kr_per_kwh",
+            "total_price_kr_kwh": "total_price_kr_per_kwh",
+        }
+    )
+
     save_total_price_15m(
-        price_slots=df[["datetime_local", "spot_kr_kwh", "total_price_kr_kwh"]].rename(
-            columns={
-                "datetime_local": "slot_local",
-                "spot_kr_kwh": "spot_price_kr_per_kwh",
-                "total_price_kr_kwh": "total_price_kr_per_kwh",
-            }
-        )
+        price_slots=price_slots_to_save
     )
 
     # --- Parse trip times (accept various time formats) ---
