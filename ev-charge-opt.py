@@ -7,14 +7,11 @@ import json
 import time
 import math
 import re
+import subprocess
 import requests
 import numpy as np
 import pandas as pd
 import pulp
-try:
-    import psycopg2
-except ImportError:
-    psycopg2 = None
 from datetime import datetime, timedelta
 from pytz import timezone
 from pandas.api.types import is_datetime64_any_dtype
@@ -52,11 +49,8 @@ AZIMUTH = 0
 TZ = "Europe/Copenhagen"
 TM_DB_NAME = os.getenv("TM_DB_NAME", "teslamate")
 TM_DB_USER = os.getenv("TM_DB_USER", "teslamate")
-TM_DB_PASSWORD = os.getenv("TM_DB_PASSWORD", "")
-TM_DB_HOST = os.getenv("TM_DB_HOST", "")
-TM_DB_PORT = int(os.getenv("TM_DB_PORT", "5432"))
-TM_DB_SSLMODE = os.getenv("TM_DB_SSLMODE", "prefer")
 TM_DB_SCHEMA = os.getenv("TM_DB_SCHEMA", "history")
+TM_DB_CONTAINER = os.getenv("TM_DB_CONTAINER", "")
 
 # --- Environment Variables ---
 if len(sys.argv) < 2:
@@ -171,46 +165,40 @@ def _history_table(base_table: str):
     return f"{TM_DB_SCHEMA}.{base_table}"
 
 
-def _run_psql_direct(sql: str) -> bool:
+def _run_psql_via_docker_exec(sql: str) -> bool:
     """
-    Execute SQL directly against Postgres using host/port credentials.
-    Returns True on success, False on failure.
+    Execute SQL via docker exec against the Postgres container.
+    Useful when Postgres is only reachable inside Docker Compose.
     """
-    if psycopg2 is None:
-        log("⚠️ Direct Postgres write failed: psycopg2 not installed")
-        return False
-    if not TM_DB_HOST:
-        log("⚠️ Direct Postgres write failed: TM_DB_HOST is not set")
+    if not TM_DB_CONTAINER:
+        log("⚠️ Docker exec DB write failed: TM_DB_CONTAINER is not set")
         return False
 
-    conn = None
+    cmd = [
+        "docker",
+        "exec",
+        "-i",
+        TM_DB_CONTAINER,
+        "psql",
+        "-U",
+        TM_DB_USER,
+        TM_DB_NAME,
+        "-v",
+        "ON_ERROR_STOP=1",
+    ]
     try:
-        conn = psycopg2.connect(
-            dbname=TM_DB_NAME,
-            user=TM_DB_USER,
-            password=TM_DB_PASSWORD,
-            host=TM_DB_HOST,
-            port=TM_DB_PORT,
-            sslmode=TM_DB_SSLMODE,
-            connect_timeout=5,
-        )
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute(sql)
+        subprocess.run(cmd, input=sql, text=True, capture_output=True, check=True)
         return True
     except Exception as e:
-        log(f"⚠️ Direct Postgres write failed: {e}")
+        log(f"⚠️ Docker exec DB write failed: {e}")
         return False
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def _run_psql(sql: str) -> bool:
     """
-    Execute SQL directly against Postgres.
+    Execute SQL via docker exec against the configured Postgres container.
     """
-    return _run_psql_direct(sql)
+    return _run_psql_via_docker_exec(sql)
 
 
 def ensure_history_tables() -> bool:
