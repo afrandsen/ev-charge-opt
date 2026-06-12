@@ -212,45 +212,83 @@ def ensure_history_tables() -> bool:
 
     CREATE TABLE IF NOT EXISTS {solax_table} (
         slot_utc timestamptz PRIMARY KEY,
-        ac_power_w double precision NOT NULL,
+        solar_kwh_now double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS {nordpool_table} (
         slot_utc timestamptz PRIMARY KEY,
-        price_ore_per_kwh double precision NOT NULL,
+        spot_price_kr_per_kwh double precision,
+        total_price_kr_per_kwh double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE {nordpool_table}
+    ADD COLUMN IF NOT EXISTS spot_price_kr_per_kwh double precision;
     """
     return _run_psql(sql)
 
 
-def save_solax_ac_power_15m(slot_local: pd.Timestamp, ac_power_w: float) -> bool:
+def save_solax_solar_kwh_15m(slot_local: pd.Timestamp, solar_kwh_now: float) -> bool:
     solax_table = _history_table("ev_charge_opt_solax_ac_power_15m")
     if not solax_table:
         return False
 
     slot_utc = _to_sql_timestamp(slot_local)
     sql = f"""
-    INSERT INTO {solax_table} (slot_utc, ac_power_w)
-    VALUES ('{slot_utc}'::timestamptz, {float(ac_power_w)})
+    INSERT INTO {solax_table} (slot_utc, solar_kwh_now)
+    VALUES ('{slot_utc}'::timestamptz, {float(solar_kwh_now)})
     ON CONFLICT (slot_utc) DO UPDATE
-    SET ac_power_w = EXCLUDED.ac_power_w,
+    SET solar_kwh_now = EXCLUDED.solar_kwh_now,
         updated_at = now();
     """
     return _run_psql(sql)
 
 
-def _expand_hourly_prices_to_quarters(prices_hourly: pd.DataFrame) -> pd.DataFrame:
+def _prepare_total_prices_hourly(prices_hourly: pd.DataFrame) -> pd.DataFrame:
     """
-    Expand hourly spot prices to 15-minute resolution by repeating each hourly value.
+    Convert hourly spot prices to hourly total prices in kr/kWh.
     """
     if prices_hourly.empty:
-        return pd.DataFrame(columns=["slot_utc", "price_ore_per_kwh"])
+        return pd.DataFrame(columns=["date", "total_price_kr_per_kwh"])
 
     df = prices_hourly[["date", "price"]].copy()
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+    df["datetime_local"] = df["date"].dt.tz_convert(TZ)
+    df["spot_kr_per_kwh"] = df["price"] / 100.0
+
+    h = df["datetime_local"].dt.hour.values
+    df_dates = df["datetime_local"].dt.date
+    cutover = pd.Timestamp("2026-04-01").date()
+
+    dso = np.zeros(len(df))
+    mask_old = df_dates < cutover
+    dso[mask_old & (h >= 0) & (h < 6)] = 0.070375
+    dso[mask_old & (h >= 6) & (h < 17)] = 0.21125
+    dso[mask_old & (h >= 17) & (h < 21)] = 0.63375
+    dso[mask_old & (h >= 21) & (h < 24)] = 0.21125
+
+    mask_new = df_dates >= cutover
+    dso[mask_new & (h >= 0) & (h < 6)] = 0.070375
+    dso[mask_new & (h >= 6) & (h < 17)] = 0.105625
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.274625
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.105625
+
+    flat_adders = SYSTEMTARIF + NETTARIF_TSO + ELAFGIFT + TILLAEG
+    df["total_price_kr_per_kwh"] = df["spot_kr_per_kwh"] + dso + flat_adders
+    return df[["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"]]
+
+
+def _expand_hourly_total_prices_to_quarters(prices_hourly_total: pd.DataFrame) -> pd.DataFrame:
+    """
+    Expand hourly total prices to 15-minute resolution by repeating each hourly value.
+    """
+    if prices_hourly_total.empty:
+        return pd.DataFrame(columns=["slot_utc", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"])
+
+    df = prices_hourly_total[["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"]].copy()
     df["date"] = pd.to_datetime(df["date"], utc=True)
 
     repeated = df.loc[df.index.repeat(4)].copy().reset_index(drop=True)
@@ -258,31 +296,35 @@ def _expand_hourly_prices_to_quarters(prices_hourly: pd.DataFrame) -> pd.DataFra
         np.tile([0, 15, 30, 45], len(df)),
         unit="m",
     )
-    repeated.rename(columns={"price": "price_ore_per_kwh"}, inplace=True)
-    return repeated[["slot_utc", "price_ore_per_kwh"]]
+    repeated.rename(columns={"spot_kr_per_kwh": "spot_price_kr_per_kwh"}, inplace=True)
+    return repeated[["slot_utc", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]]
 
 
-def save_nordpool_spot_price_15m(prices_hourly: pd.DataFrame) -> bool:
+def save_total_price_15m(prices_hourly_spot: pd.DataFrame) -> bool:
     nordpool_table = _history_table("ev_charge_opt_nordpool_spot_price_15m")
     if not nordpool_table:
         return False
 
-    expanded = _expand_hourly_prices_to_quarters(prices_hourly)
+    prices_hourly_total = _prepare_total_prices_hourly(prices_hourly_spot)
+    expanded = _expand_hourly_total_prices_to_quarters(prices_hourly_total)
     if expanded.empty:
-        log("⚠️ No Nordpool prices available to persist")
+        log("⚠️ No total prices available to persist")
         return False
 
     values_sql = []
     for row in expanded.itertuples(index=False):
         slot_utc = _to_sql_timestamp(pd.Timestamp(row.slot_utc))
-        values_sql.append(f"('{slot_utc}'::timestamptz, {float(row.price_ore_per_kwh)})")
+        spot_price = float(row.spot_price_kr_per_kwh)
+        total_price = float(row.total_price_kr_per_kwh)
+        values_sql.append(f"('{slot_utc}'::timestamptz, {spot_price}, {total_price})")
 
     sql = f"""
-    INSERT INTO {nordpool_table} (slot_utc, price_ore_per_kwh)
+    INSERT INTO {nordpool_table} (slot_utc, spot_price_kr_per_kwh, total_price_kr_per_kwh)
     VALUES
     """ + ",\n".join(values_sql) + """
     ON CONFLICT (slot_utc) DO UPDATE
-    SET price_ore_per_kwh = EXCLUDED.price_ore_per_kwh,
+    SET spot_price_kr_per_kwh = EXCLUDED.spot_price_kr_per_kwh,
+        total_price_kr_per_kwh = EXCLUDED.total_price_kr_per_kwh,
         updated_at = now();
     """
     return _run_psql(sql)
@@ -399,8 +441,8 @@ def override_with_inverter(
                 else:
                     log(f"⚠️ Current slot {now_slot} not in df timeline")
 
-                if save_solax_ac_power_15m(now_slot, ac_power_w):
-                    log(f"✅ Saved Solax AC power history at {now_slot}: {ac_power_w:.1f} W")
+                if save_solax_solar_kwh_15m(now_slot, solar_kwh_now):
+                    log(f"✅ Saved Solax solar history at {now_slot}: {solar_kwh_now:.3f} kWh")
                 return df
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
@@ -651,8 +693,8 @@ def combine_actuals_and_forecast(
 # --- Data Fetching ---
 ensure_history_tables()
 prices_actual = fetch_dk1_prices_dkk()
-if save_nordpool_spot_price_15m(prices_actual):
-    log(f"✅ Saved Nordpool 15-minute history rows: {len(prices_actual) * 4}")
+if save_total_price_15m(prices_actual):
+    log(f"✅ Saved total-price 15-minute history rows: {len(prices_actual) * 4}")
 prices_forecast = fetch_combined_forecast(source="epex", apikey=carnot_apikey, username=carnot_username)
 prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast, tz=TZ)
 prices = prices.sort_values("date").reset_index(drop=True)
