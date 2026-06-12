@@ -20,3 +20,4 @@ TatSu==5.15.1
 tzdata==2026.2
 urllib3==2.7.0
 x_wr_timezone==2.0.1
+psycopg2-binary
