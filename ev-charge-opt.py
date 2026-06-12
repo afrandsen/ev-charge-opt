@@ -210,14 +210,14 @@ def ensure_history_tables() -> bool:
     CREATE SCHEMA IF NOT EXISTS {TM_DB_SCHEMA};
 
     CREATE TABLE IF NOT EXISTS {solax_table} (
-        slot_local timestamp PRIMARY KEY,
+        slot_local timestamptz PRIMARY KEY,
         solar_kwh_now double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS {nordpool_table} (
-        slot_local timestamp PRIMARY KEY,
+        slot_local timestamptz PRIMARY KEY,
         spot_price_kr_per_kwh double precision,
         total_price_kr_per_kwh double precision NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
@@ -238,7 +238,7 @@ def save_solax_solar_kwh_15m(slot_local: pd.Timestamp, solar_kwh_now: float) -> 
     slot_local_sql = _to_sql_local_timestamp(slot_local)
     sql = f"""
     INSERT INTO {solax_table} (slot_local, solar_kwh_now)
-    VALUES ('{slot_local_sql}'::timestamp, {float(solar_kwh_now)})
+    VALUES ('{slot_local_sql}'::timestamp AT TIME ZONE '{TZ}', {float(solar_kwh_now)})
     ON CONFLICT (slot_local) DO UPDATE
     SET solar_kwh_now = EXCLUDED.solar_kwh_now,
         updated_at = now();
@@ -319,7 +319,7 @@ def save_total_price_15m(prices_hourly_spot: pd.DataFrame = None, price_slots: p
         slot_local_sql = _to_sql_local_timestamp(pd.Timestamp(row.slot_local))
         spot_price = float(row.spot_price_kr_per_kwh)
         total_price = float(row.total_price_kr_per_kwh)
-        values_sql.append(f"('{slot_local_sql}'::timestamp, {spot_price}, {total_price})")
+        values_sql.append(f"('{slot_local_sql}'::timestamp AT TIME ZONE '{TZ}', {spot_price}, {total_price})")
 
     sql = f"""
     INSERT INTO {nordpool_table} (slot_local, spot_price_kr_per_kwh, total_price_kr_per_kwh)
