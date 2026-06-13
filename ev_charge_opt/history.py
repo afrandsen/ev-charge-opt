@@ -96,14 +96,25 @@ class HistoryStore:
         CREATE TABLE IF NOT EXISTS {charge_costs_table} (
             charging_process_id uuid PRIMARY KEY,
             charged_kwh numeric,
+            solar_kwh numeric,
             grid_kwh numeric,
-            cost_kr numeric,
+            session_cost_kr numeric,
+            cost_kr_per_kwh numeric,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         );
 
         ALTER TABLE {nordpool_table}
         ADD COLUMN IF NOT EXISTS spot_price_kr_per_kwh double precision;
+
+        ALTER TABLE {charge_costs_table}
+        ADD COLUMN IF NOT EXISTS solar_kwh numeric;
+
+        ALTER TABLE {charge_costs_table}
+        ADD COLUMN IF NOT EXISTS session_cost_kr numeric;
+
+        ALTER TABLE {charge_costs_table}
+        ADD COLUMN IF NOT EXISTS cost_kr_per_kwh numeric;
         """
         return self._run_psql(sql)
 
@@ -151,10 +162,20 @@ class HistoryStore:
 
     def populate_charge_costs_per_session(self) -> bool:
         charge_costs_table = self._history_table("charge_costs_per_session")
-        if not charge_costs_table:
+        nordpool_table = self._history_table("ev_charge_opt_nordpool_spot_price_15m")
+        solax_table = self._history_table("ev_charge_opt_solax_ac_power_15m")
+        if not charge_costs_table or not nordpool_table or not solax_table:
             return False
 
         sql = f"""
+        INSERT INTO {charge_costs_table} (
+            charging_process_id,
+            charged_kwh,
+            solar_kwh,
+            grid_kwh,
+            session_cost_kr,
+            cost_kr_per_kwh
+        )
         WITH charge_deltas AS (
             SELECT
                 c.charging_process_id,
@@ -228,12 +249,18 @@ class HistoryStore:
                 4
             ) AS cost_kr_per_kwh
         FROM charge_buckets cb
-        JOIN history_ev_charge_opt_nordpool_spot_price_15m p
+        JOIN {nordpool_table} p
             ON p.slot_local = cb.bucket
-        LEFT JOIN history_ev_charge_opt_solax_dc_power_15m s
+        LEFT JOIN {solax_table} s
             ON s.slot_local = cb.bucket
         GROUP BY cb.charging_process_id
-        ON CONFLICT (charging_process_id) DO NOTHING;
+        ON CONFLICT (charging_process_id) DO UPDATE
+        SET charged_kwh = EXCLUDED.charged_kwh,
+            solar_kwh = EXCLUDED.solar_kwh,
+            grid_kwh = EXCLUDED.grid_kwh,
+            session_cost_kr = EXCLUDED.session_cost_kr,
+            cost_kr_per_kwh = EXCLUDED.cost_kr_per_kwh,
+            updated_at = now();
         """
         return self._run_psql(sql)
 
