@@ -3,48 +3,76 @@
 # Load environment variables from .env.local (LAT, LON, etc.)
 source ~/repos/ev-charge-opt/.env.local
 
-# Check if car is within 2000 m of home
-IS_HOME=$(docker exec -database-1 \
+# Usage:
+#   Auto mode (TeslaMate):
+#     ./run.sh
+#   Manual mode (when TeslaMate is unavailable):
+#     ./run.sh <SOC> <IS_HOME> <EFF_KWH_PER_KM> <CHARGE_EFF>
+# Example:
+#   ./run.sh 62 t 0.135 0.94
+
+if [ "$#" -eq 4 ]; then
+    SOC="$1"
+    IS_HOME="$2"
+    EFF_KWH_PER_KM="$3"
+    CHARGE_EFF="$4"
+
+    echo "🛠️ Manual mode enabled (TeslaMate bypassed)"
+else
+    # Check if car is within 2000 m of home
+    IS_HOME=$(docker exec -database-1 \
+              psql -U teslamate teslamate -t -c \
+              "SELECT (earth_distance(ll_to_earth(latitude, longitude), ll_to_earth(${LAT}, ${LON})) <= 2000) AS is_home FROM positions WHERE car_id = 1 ORDER BY date DESC LIMIT 1;" | xargs)
+
+    if [ -z "$IS_HOME" ]; then
+        echo "❌ Could not read IS_HOME from TeslaMate."
+        echo "Run manually instead: ./run.sh <SOC> <IS_HOME> <EFF_KWH_PER_KM> <CHARGE_EFF>"
+        exit 1
+    fi
+
+    # Fetch the latest SOC from TeslaMate database inside Docker
+    SOC=$(docker exec -database-1 \
           psql -U teslamate teslamate -t -c \
-          "SELECT (earth_distance(ll_to_earth(latitude, longitude), ll_to_earth(${LAT}, ${LON})) <= 2000) AS is_home FROM positions WHERE car_id = 1 ORDER BY date DESC LIMIT 1;" | xargs)
+          "SELECT battery_level FROM positions ORDER BY date DESC LIMIT 1;" | xargs)
+
+    # Fetch charging efficiency from TeslaMate database inside Docker
+    CHARGE_EFF=$(docker exec -database-1 \
+                 psql -U teslamate teslamate -t -c \
+                 "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
+                 AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01 LIMIT 1;" | xargs)
+
+    # Fetch efficiency from TeslaMate database inside Docker
+    EFF_KWH_PER_KM=$(docker exec -database-1 \
+                     psql -U teslamate teslamate -t -c \
+                     "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_last10_avg
+                     FROM (
+                         SELECT d.*
+                         FROM drives d
+                         JOIN cars car ON car.id = d.car_id
+                         WHERE distance > 10
+                         AND start_rated_range_km IS NOT NULL
+                         AND end_rated_range_km IS NOT NULL
+                         AND (start_rated_range_km - end_rated_range_km) > 0
+                         ORDER BY start_date DESC
+                         LIMIT 10
+                     ) last10
+                     JOIN cars car ON car.id = last10.car_id LIMIT 1;" | xargs)
+
+    if [ -z "$SOC" ] || [ -z "$CHARGE_EFF" ] || [ -z "$EFF_KWH_PER_KM" ]; then
+        echo "❌ Could not read one or more optimizer inputs from TeslaMate."
+        echo "Run manually instead: ./run.sh <SOC> <IS_HOME> <EFF_KWH_PER_KM> <CHARGE_EFF>"
+        exit 1
+    fi
+fi
 
 if [ "$IS_HOME" = "t" ]; then
     echo "⚡ Car is home within 2000 m → running ev-charge-opt"
+    source ~/repos/ev-charge-opt/venv/bin/activate
 
-      # Fetch the latest SOC from TeslaMate database inside Docker
-      SOC=$(docker exec -database-1 \
-            psql -U teslamate teslamate -t -c \
-            "SELECT battery_level FROM positions ORDER BY date DESC LIMIT 1;" | xargs)
+    python ~/repos/ev-charge-opt/get_trips.py
 
-      # Fetch charging efficiency from TeslaMate database inside Docker
-      CHARGE_EFF=$(docker exec -database-1 \
-                   psql -U teslamate teslamate -t -c \
-                   "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
-                   AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01 LIMIT 1;" | xargs)
-
-      # Fetch efficiency from TeslaMate database inside Docker
-      EFF_KWH_PER_KM=$(docker exec -database-1 \
-                       psql -U teslamate teslamate -t -c \
-                       "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_last10_avg
-                       FROM (
-                           SELECT d.*
-                           FROM drives d
-                           JOIN cars car ON car.id = d.car_id
-                           WHERE distance > 10
-                           AND start_rated_range_km IS NOT NULL
-                           AND end_rated_range_km IS NOT NULL
-                           AND (start_rated_range_km - end_rated_range_km) > 0
-                           ORDER BY start_date DESC
-                           LIMIT 10
-                       ) last10
-                       JOIN cars car ON car.id = last10.car_id LIMIT 1;" | xargs)
-
-      source ~/repos/ev-charge-opt/venv/bin/activate
-
-      python ~/repos/ev-charge-opt/get_trips.py
-
-      # Call ev-charge-opt.py with the fetched SOC
-      python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC" "$IS_HOME" "$EFF_KWH_PER_KM" "$CHARGE_EFF"
+    # Call ev-charge-opt.py with either fetched or manually provided values
+    python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC" "$IS_HOME" "$EFF_KWH_PER_KM" "$CHARGE_EFF"
 else
     echo "🚗 Car is not home → skipping ev-charge-opt"
 fi
