@@ -14,7 +14,8 @@ import recurring_ical_events
 # =====================
 # LOAD ENV VARIABLES
 # =====================
-ENV_FILE = ".env.local"
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.path.join(REPO_ROOT, ".env.local")
 load_dotenv(ENV_FILE)
 
 LOCAL_TZ = ZoneInfo("Europe/Copenhagen")

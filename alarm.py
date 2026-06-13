@@ -1,5 +1,4 @@
 from dotenv import load_dotenv
-load_dotenv('.env.local')
 
 import sys
 import os
@@ -7,6 +6,9 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(REPO_ROOT, '.env.local'))
 
 def send_email_notification(subject: str, body: str, sender: str, recipient: str, smtp_server: str, smtp_port: int, username: str, password: str):
     msg = MIMEMultipart()

@@ -11,6 +11,8 @@ source ~/repos/ev-charge-opt/.env.local
 # Example:
 #   ./run.sh 62 t 0.135 0.94
 
+source ~/repos/ev-charge-opt/venv/bin/activate
+
 if [ "$#" -eq 4 ]; then
     SOC="$1"
     IS_HOME="$2"
@@ -67,12 +69,13 @@ fi
 
 if [ "$IS_HOME" = "t" ]; then
     echo "⚡ Car is home within 2000 m → running ev-charge-opt"
-    source ~/repos/ev-charge-opt/venv/bin/activate
 
     python ~/repos/ev-charge-opt/get_trips.py
 
-    # Call ev-charge-opt.py with either fetched or manually provided values
+    # Optimizer run also persists Solax + spot/total price history.
     python ~/repos/ev-charge-opt/ev-charge-opt.py "$SOC" "$IS_HOME" "$EFF_KWH_PER_KM" "$CHARGE_EFF"
 else
     echo "🚗 Car is not home → skipping ev-charge-opt"
+    echo "📚 Running independent history sync"
+    python ~/repos/ev-charge-opt/history_sync.py
 fi
