@@ -165,8 +165,16 @@ def _parse_trip_time(s):
 
 
 def _persist_price_history(prices: pd.DataFrame, cfg: dict, store: HistoryStore) -> None:
+    # Persist only Nordpool actuals; exclude forecast sources from history tables.
+    prices_for_history = prices
+    if "source" in prices.columns:
+        prices_for_history = prices[prices["source"].eq("Nordpool")].copy()
+
+    if prices_for_history.empty:
+        return
+
     hourly_total = prepare_total_prices_hourly(
-        prices_hourly=prices,
+        prices_hourly=prices_for_history,
         tz=cfg["tz"],
         systemtarif=cfg["systemtarif"],
         nettarif_tso=cfg["nettarif_tso"],
