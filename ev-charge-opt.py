@@ -448,8 +448,7 @@ def override_with_inverter(
                 if mask.any():
                     slot_for_save = pd.Timestamp(df.loc[mask, "datetime_local"].iloc[0])
 
-                if save_solax_solar_kwh_15m(slot_for_save, solar_kwh_now):
-                    log(f"✅ Saved Solax solar history at {slot_for_save}: {solar_kwh_now:.3f} kWh")
+                save_solax_solar_kwh_15m(slot_for_save, solar_kwh_now)
                 return df
             else:
                 raise ValueError("Inverter API returned no data or missing acpower")
@@ -1022,8 +1021,6 @@ def optimize_ev_charging(
             (df["wday_label"].values == t["day"].lower()) &
             ((df["hour_local"].values * 60 + df["minute_local"].values) == dep_minutes)
         ]
-        log(f"trip {t['day']} {t['away_start']} -> matched pos(s): {idx_dep.tolist()}")
-        log(f"datetime at matched pos(s): {df.loc[idx_dep, 'datetime_local'].tolist()}")
         if len(idx_dep) >= 1:
             h_dep = idx_dep[0]
             trip_energy_vec[h_dep] += need_kwh
@@ -1247,31 +1244,25 @@ mask_events = (
     (df_out["solar_charge_kwh"].values > 0)
 )
 
-log("\n=== Optimal Charging & Trip Events (15-min) ===")
+log("\n=== Charging & Trip Events (Phone View) ===")
 header = (
-    f"{'datetime_local':<16} | {'weekday':<9} | {'irradiance':<10} | "
-    f"{'price_kr/kWh':>12} | {'eff_price_kr/kWh':>12} | {'grid_kWh':>8} | {'solar_kWh':>9} | {'total_kwh':>9} | "
-    f"{'amp':>3} | {'trip_kWh':>8} | {'sc_kwh':>8} | {'soc_kwh':>7} | {'soc_%_before':>12} | {'soc_%_after':>11}"
+    f"{'dt':<11} {'wd':<3} {'A':>2} {'SoC b->a':>9} {'g/s/t kWh':>14} {'trip':>5} {'kr':>5} {'eff':>5}"
 )
 log(header)
 log("-" * len(header))
 
 for _, row in df_out.loc[mask_events].iterrows():
+    eff_price = row["effective_price_kr_per_kwh_drawn"]
+    eff_str = f"{eff_price:>5.2f}" if pd.notna(eff_price) else "    -"
     log(
-        f"{row['datetime_local']:%Y-%m-%d %H:%M} | "
-        f"{row['weekday']:<9} | "
-        f"{row['irradiance']:>10.0f} | "
-        f"{row['price_kr_per_kwh']:>12.2f} | "
-        f"{row['effective_price_kr_per_kwh_drawn']:>16.2f} | "
-        f"{row['grid_charge_kwh']:>8.2f} | "
-        f"{row['solar_charge_kwh']:>9.2f} | "
-        f"{row['total_charge_kwh']:>9.2f} | "
-        f"{int(row['amp']):>3d} | "
-        f"{row['trip_kwh_at_departure']:>8.2f} | "
-        f"{row['sc_kwh']:>8.2f} |"
-        f"{row['soc_kwh']:>8.2f} | "
-        f"{row['soc_pct_before']:>12.1f} | "
-        f"{row['soc_pct_after']:>11.1f}"
+        f"{row['datetime_local']:%m-%d %H:%M} "
+        f"{str(row['weekday'])[:3]:<3} "
+        f"{int(row['amp']):>2d} "
+        f"{row['soc_pct_before']:>4.1f}->{row['soc_pct_after']:<4.1f} "
+        f"{row['grid_charge_kwh']:>4.2f}/{row['solar_charge_kwh']:>4.2f}/{row['total_charge_kwh']:>4.2f} "
+        f"{row['trip_kwh_at_departure']:>5.2f} "
+        f"{row['price_kr_per_kwh']:>5.2f} "
+        f"{eff_str}"
     )
 
 # Totals (drawn vs stored)
