@@ -56,6 +56,8 @@ def main() -> int:
         slot_local, solar_kwh = solax
         store.save_solax_solar_kwh_15m(slot_local, solar_kwh)
 
+    store.populate_charge_costs_per_session()
+
     log("✅ Independent history sync completed")
     return 0
 

@@ -71,7 +71,8 @@ class HistoryStore:
     def ensure_history_tables(self) -> bool:
         solax_table = self._history_table("ev_charge_opt_solax_ac_power_15m")
         nordpool_table = self._history_table("ev_charge_opt_nordpool_spot_price_15m")
-        if not solax_table or not nordpool_table:
+        charge_costs_table = self._history_table("charge_costs_per_session")
+        if not solax_table or not nordpool_table or not charge_costs_table:
             return False
 
         sql = f"""
@@ -88,6 +89,15 @@ class HistoryStore:
             slot_local timestamptz PRIMARY KEY,
             spot_price_kr_per_kwh double precision,
             total_price_kr_per_kwh double precision NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS {charge_costs_table} (
+            charging_process_id uuid PRIMARY KEY,
+            charged_kwh numeric,
+            grid_kwh numeric,
+            cost_kr numeric,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         );
@@ -136,6 +146,71 @@ class HistoryStore:
         SET spot_price_kr_per_kwh = EXCLUDED.spot_price_kr_per_kwh,
             total_price_kr_per_kwh = EXCLUDED.total_price_kr_per_kwh,
             updated_at = now();
+        """
+        return self._run_psql(sql)
+
+    def populate_charge_costs_per_session(self) -> bool:
+        charge_costs_table = self._history_table("charge_costs_per_session")
+        if not charge_costs_table:
+            return False
+
+        sql = f"""
+        WITH charge_deltas AS (
+            SELECT
+                c.charging_process_id,
+                c.date_trunc('hour', c.date_) PARTITION BY c.charging_process_id ORDER BY c.date_,
+                cs.dc_delta_kwh
+            FROM charges c
+            WHERE c.energy_added IS NOT NULL
+        ),
+        charge_buckets AS (
+            SELECT
+                c.charging_process_id,
+                date_trunc('hour', c.date_) + floor(extract(minute FROM c.date_) / 15) * interval '15 minutes' AS bucket,
+                SUM(cd.delta_kwh) (
+                    cp.charge_energy_used::numeric / nullif(cp.charge_energy_added, 0)
+                ) AS charge_kwh
+            FROM charge_deltas cd
+            JOIN charging_process cp ON cd.charging_process_id = cp.charging_process_id
+            WHERE cd.delta_kwh IS NOT NULL
+            GROUP BY
+                cd.charging_process_id,
+                bucket,
+                cd.charge_energy_added,
+                cd.charge_energy_used
+        )
+        INSERT INTO {charge_costs_table} (charging_process_id, charged_kwh, grid_kwh, cost_kr, created_at, updated_at)
+        SELECT
+            cp.charging_process_id,
+            ROUND(SUM(COALESCE(s.solar_kwh_now, 0))::numeric, 4) AS charged_kwh,
+            ROUND(
+                SUM(
+                    GREATEST(
+                        cb.charge_kwh - (COALESCE(s.solar_kwh_now, 0)),
+                        0
+                    )
+                )::numeric,
+                4
+            ) AS grid_kwh,
+            ROUND(
+                SUM(
+                    GREATEST(
+                        cb.charge_kwh - (COALESCE(s.solar_kwh_now, 0)),
+                        0
+                    ) * s.total_price_kr_per_kwh
+                )::numeric,
+                4
+            ) AS cost_kr,
+            now() AS created_at,
+            now() AS updated_at
+        FROM charge_buckets cb
+        JOIN history_ew_charge_opt_data sc ON cb.charging_process_id = sc.charging_process_id
+            AND cb.bucket = sc.bucket
+        WHERE sc.solar_local - cb.bucket >= 0
+            OR p.grid_local - cb.bucket IS NOT NULL
+        JOIN history_ew_charge_opt_data sc
+        GROUP BY cb.charging_process_id
+        ON CONFLICT (charging_process_id) DO NOTHING;
         """
         return self._run_psql(sql)
 
