@@ -71,7 +71,8 @@ class HistoryStore:
     def ensure_history_tables(self) -> bool:
         solax_table = self._history_table("ev_charge_opt_solax_ac_power_15m")
         nordpool_table = self._history_table("ev_charge_opt_nordpool_spot_price_15m")
-        if not solax_table or not nordpool_table:
+        charging_session_table = self._history_table("ev_charge_opt_charging_session_summary")
+        if not solax_table or not nordpool_table or not charging_session_table:
             return False
 
         sql = f"""
@@ -88,6 +89,19 @@ class HistoryStore:
             slot_local timestamptz PRIMARY KEY,
             spot_price_kr_per_kwh double precision,
             total_price_kr_per_kwh double precision NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS {charging_session_table} (
+            charging_process_id bigint PRIMARY KEY,
+            start_date timestamp without time zone,
+            end_date timestamp without time zone,
+            charged_kwh double precision NOT NULL,
+            solar_kwh double precision NOT NULL,
+            grid_kwh double precision NOT NULL,
+            session_cost_kr double precision NOT NULL,
+            cost_kr_per_kwh double precision,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         );
@@ -135,6 +149,136 @@ class HistoryStore:
         ON CONFLICT (slot_local) DO UPDATE
         SET spot_price_kr_per_kwh = EXCLUDED.spot_price_kr_per_kwh,
             total_price_kr_per_kwh = EXCLUDED.total_price_kr_per_kwh,
+            updated_at = now();
+        """
+        return self._run_psql(sql)
+
+    def save_charging_session_summary(self) -> bool:
+        charging_session_table = self._history_table("ev_charge_opt_charging_session_summary")
+        nordpool_table = self._history_table("ev_charge_opt_nordpool_spot_price_15m")
+        solax_table = self._history_table("ev_charge_opt_solax_ac_power_15m")
+        if not charging_session_table or not nordpool_table or not solax_table:
+            return False
+
+        sql = f"""
+        INSERT INTO {charging_session_table} (
+            charging_process_id,
+            start_date,
+            end_date,
+            charged_kwh,
+            solar_kwh,
+            grid_kwh,
+            session_cost_kr,
+            cost_kr_per_kwh
+        )
+        WITH charge_deltas AS (
+            SELECT
+                c.charging_process_id,
+                c.date,
+                greatest(
+                    c.charge_energy_added
+                    - lag(c.charge_energy_added) OVER (
+                        PARTITION BY c.charging_process_id
+                        ORDER BY c.date
+                    ),
+                    0
+                ) AS delta_kwh
+            FROM charges c
+            WHERE c.charge_energy_added IS NOT NULL
+        ),
+
+        charge_buckets AS (
+            SELECT
+                cd.charging_process_id,
+                cp.start_date,
+                cp.end_date,
+                date_trunc('hour', cd.date)
+                    + floor(extract(minute FROM cd.date) / 15) * interval '15 minutes' AS bucket,
+
+                sum(cd.delta_kwh)
+                    * (
+                        cp.charge_energy_used::numeric
+                        / nullif(cp.charge_energy_added, 0)
+                    ) AS charge_kwh
+
+            FROM charge_deltas cd
+            JOIN charging_processes cp
+                ON cp.id = cd.charging_process_id
+            WHERE cd.delta_kwh IS NOT NULL
+            GROUP BY
+                cd.charging_process_id,
+                cp.start_date,
+                cp.end_date,
+                bucket,
+                cp.charge_energy_added,
+                cp.charge_energy_used
+        )
+
+        SELECT
+            cb.charging_process_id,
+            cb.start_date,
+            cb.end_date,
+
+            round(sum(cb.charge_kwh)::numeric, 4) AS charged_kwh,
+
+            round(
+                sum(coalesce(s.solar_kwh_now, 0))::numeric,
+                4
+            ) AS solar_kwh,
+
+            round(
+                sum(
+                    greatest(
+                        cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                        0
+                    )
+                )::numeric,
+                4
+            ) AS grid_kwh,
+
+            round(
+                sum(
+                    greatest(
+                        cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                        0
+                    ) * p.total_price_kr_per_kwh
+                )::numeric,
+                4
+            ) AS session_cost_kr,
+
+            round(
+                (
+                    sum(
+                        greatest(
+                            cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                            0
+                        ) * p.total_price_kr_per_kwh
+                    )
+                    /
+                    nullif(sum(cb.charge_kwh), 0)
+                )::numeric,
+                4
+            ) AS cost_kr_per_kwh
+        FROM charge_buckets cb
+
+        JOIN {nordpool_table} p
+            ON p.slot_local = cb.bucket
+
+        LEFT JOIN {solax_table} s
+            ON s.slot_local = cb.bucket
+
+        GROUP BY
+            cb.charging_process_id,
+            cb.start_date,
+            cb.end_date
+        ON CONFLICT (charging_process_id) DO UPDATE
+        SET start_date = EXCLUDED.start_date,
+            end_date = EXCLUDED.end_date,
+            charged_kwh = EXCLUDED.charged_kwh,
+            solar_kwh = EXCLUDED.solar_kwh,
+            grid_kwh = EXCLUDED.grid_kwh,
+            session_cost_kr = EXCLUDED.session_cost_kr,
+            cost_kr_per_kwh = EXCLUDED.cost_kr_per_kwh,
             updated_at = now();
         """
         return self._run_psql(sql)
