@@ -149,6 +149,8 @@ def main(argv=None) -> int:
         )
         return 1
 
+    store.save_charging_session_summary()
+
     _format_event_log(df_out, log)
 
     total_cost = float(df_out["cost_kr"].sum())
