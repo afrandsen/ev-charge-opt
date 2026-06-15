@@ -280,9 +280,11 @@ def optimize_ev_charging(
         store.save_solax_solar_kwh_15m(now_slot, solar_kwh_now)
 
     hard_soc_max_vec = np.full(horizon, soc_max)
+    trip_soc_max_vec = np.full(horizon, np.nan)
     trip_energy_vec = np.zeros(horizon)
     sc_energy_vec = np.zeros(horizon)
     trip_departures = []
+    trip_requirements = []
 
     for _, t in trips.iterrows():
         if "distance_km" not in t:
@@ -303,16 +305,23 @@ def optimize_ev_charging(
         h_dep = idx_dep[0]
         trip_energy_vec[h_dep] += need_kwh
         trip_departures.append((h_dep, max(0.0, need_kwh)))
+        trip_requirements.append((h_dep, need_kwh, t["day"], t["away_start"]))
 
         if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
             sc_energy_vec[h_dep] += float(t["supercharge_kwh"])
 
         if "max_soc_pct" in t and pd.notna(t["max_soc_pct"]):
             trip_max = cfg["battery_kwh"] * float(t["max_soc_pct"])
-            hard_soc_max_vec[: h_dep + 1] = np.minimum(hard_soc_max_vec[: h_dep + 1], trip_max)
+            existing_trip_caps = trip_soc_max_vec[: h_dep + 1]
+            trip_soc_max_vec[: h_dep + 1] = np.where(
+                np.isnan(existing_trip_caps), trip_max, np.minimum(existing_trip_caps, trip_max)
+            )
 
+    hard_soc_max_vec = np.where(np.isnan(trip_soc_max_vec), hard_soc_max_vec, trip_soc_max_vec)
+
+    for h_dep, need_kwh, day, away_start in trip_requirements:
         if soc_min + need_kwh > hard_soc_max_vec[h_dep]:
-            raise RuntimeError(f"Trip on {t['day']} {t['away_start']} infeasible (need {need_kwh:.1f} kWh + reserve)")
+            raise RuntimeError(f"Trip on {day} {away_start} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
     soft_soc_window_slots = int(round(max(0.0, cfg["soft_soc_window_hours"]) * 4.0))
     soft_soc_min_window_slots = int(round(max(0.0, cfg["soft_soc_min_window_hours"]) * 4.0))
