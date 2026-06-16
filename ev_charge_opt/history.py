@@ -81,6 +81,7 @@ class HistoryStore:
         CREATE TABLE IF NOT EXISTS {solax_table} (
             slot_local timestamptz PRIMARY KEY,
             solar_kwh_now double precision NOT NULL,
+            sample_count integer NOT NULL DEFAULT 1,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         );
@@ -108,6 +109,9 @@ class HistoryStore:
 
         ALTER TABLE {nordpool_table}
         ADD COLUMN IF NOT EXISTS spot_price_kr_per_kwh double precision;
+
+        ALTER TABLE {solax_table}
+        ADD COLUMN IF NOT EXISTS sample_count integer NOT NULL DEFAULT 1;
         """
         return self._run_psql(sql)
 
@@ -117,11 +121,16 @@ class HistoryStore:
             return False
 
         slot_local_sql = self._to_sql_local_timestamp(slot_local)
+        value = float(solar_kwh_now)
         sql = f"""
-        INSERT INTO {solax_table} (slot_local, solar_kwh_now)
-        VALUES ('{slot_local_sql}'::timestamp AT TIME ZONE '{self.tz}', {float(solar_kwh_now)})
+        INSERT INTO {solax_table} (slot_local, solar_kwh_now, sample_count)
+        VALUES ('{slot_local_sql}'::timestamp AT TIME ZONE '{self.tz}', {value}, 1)
         ON CONFLICT (slot_local) DO UPDATE
-        SET solar_kwh_now = EXCLUDED.solar_kwh_now,
+        SET solar_kwh_now = (
+                ({solax_table}.solar_kwh_now * {solax_table}.sample_count)
+                + EXCLUDED.solar_kwh_now
+            ) / ({solax_table}.sample_count + 1),
+            sample_count = {solax_table}.sample_count + 1,
             updated_at = now();
         """
         return self._run_psql(sql)
