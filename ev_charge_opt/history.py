@@ -241,7 +241,7 @@ class HistoryStore:
         SELECT
             cb.charging_process_id,
             cb.start_date,
-            cb.end_date,
+            coalesce(max(cb.end_date), max(cb.bucket) + interval '15 minutes') AS end_date,
 
             round(sum(cb.charge_kwh)::numeric, 4) AS charged_kwh,
 
@@ -293,8 +293,7 @@ class HistoryStore:
 
         GROUP BY
             cb.charging_process_id,
-            cb.start_date,
-            cb.end_date
+            cb.start_date
         ON CONFLICT (charging_process_id) DO UPDATE
         SET start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
