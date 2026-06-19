@@ -210,7 +210,10 @@ class HistoryStore:
             SELECT
                 cd.charging_process_id,
                 cp.start_date,
-                cp.end_date,
+                COALESCE(
+                    cp.end_date,
+                    MAX(cd.date) OVER (PARTITION BY cd.charging_process_id)
+                ) AS end_date,
                 date_trunc('hour', cd.date)
                     + floor(extract(minute FROM cd.date) / 15) * interval '15 minutes' AS bucket,
 
@@ -241,19 +244,41 @@ class HistoryStore:
         SELECT
             cb.charging_process_id,
             cb.start_date,
-            coalesce(max(cb.end_date), max(cb.bucket) + interval '15 minutes') AS end_date,
+            max(cb.end_date) AS end_date,
 
             round(sum(cb.charge_kwh)::numeric, 4) AS charged_kwh,
 
             round(
-                sum(coalesce(s.solar_kwh_now, 0))::numeric,
+                sum(
+                    coalesce(s.solar_kwh_now, 0)
+                    * greatest(
+                        extract(
+                            epoch FROM (
+                                least(cb.end_date, cb.bucket + interval '15 minutes')
+                                - greatest(cb.start_date, cb.bucket)
+                            )
+                        ) / 900.0,
+                        0
+                    )
+                )::numeric,
                 4
             ) AS solar_kwh,
 
             round(
                 sum(
                     greatest(
-                        cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                        cb.charge_kwh - (
+                            coalesce(s.solar_kwh_now, 0)
+                            * greatest(
+                                extract(
+                                    epoch FROM (
+                                        least(cb.end_date, cb.bucket + interval '15 minutes')
+                                        - greatest(cb.start_date, cb.bucket)
+                                    )
+                                ) / 900.0,
+                                0
+                            )
+                        ),
                         0
                     )
                 )::numeric,
@@ -263,7 +288,18 @@ class HistoryStore:
             round(
                 sum(
                     greatest(
-                        cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                        cb.charge_kwh - (
+                            coalesce(s.solar_kwh_now, 0)
+                            * greatest(
+                                extract(
+                                    epoch FROM (
+                                        least(cb.end_date, cb.bucket + interval '15 minutes')
+                                        - greatest(cb.start_date, cb.bucket)
+                                    )
+                                ) / 900.0,
+                                0
+                            )
+                        ),
                         0
                     ) * p.total_price_kr_per_kwh
                 )::numeric,
@@ -274,7 +310,18 @@ class HistoryStore:
                 (
                     sum(
                         greatest(
-                            cb.charge_kwh - coalesce(s.solar_kwh_now, 0),
+                            cb.charge_kwh - (
+                                coalesce(s.solar_kwh_now, 0)
+                                * greatest(
+                                    extract(
+                                        epoch FROM (
+                                            least(cb.end_date, cb.bucket + interval '15 minutes')
+                                            - greatest(cb.start_date, cb.bucket)
+                                        )
+                                    ) / 900.0,
+                                    0
+                                )
+                            ),
                             0
                         ) * p.total_price_kr_per_kwh
                     )
