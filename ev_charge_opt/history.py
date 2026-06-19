@@ -196,6 +196,16 @@ class HistoryStore:
             WHERE c.charge_energy_added IS NOT NULL
         ),
 
+        avg_efficiency AS (
+            SELECT
+                SUM(charge_energy_used::numeric) / NULLIF(SUM(charge_energy_added), 0) AS ratio
+            FROM charging_processes
+            WHERE charge_energy_used IS NOT NULL
+              AND charge_energy_added IS NOT NULL
+              AND charge_energy_added > 0
+              AND address_id = 1
+        ),
+
         charge_buckets AS (
             SELECT
                 cd.charging_process_id,
@@ -206,13 +216,17 @@ class HistoryStore:
 
                 sum(cd.delta_kwh)
                     * (
-                        cp.charge_energy_used::numeric
-                        / nullif(cp.charge_energy_added, 0)
+                        COALESCE(
+                            cp.charge_energy_used::numeric / NULLIF(cp.charge_energy_added, 0),
+                            ae.ratio
+                        )
                     ) AS charge_kwh
 
             FROM charge_deltas cd
             JOIN charging_processes cp
                 ON cp.id = cd.charging_process_id
+               AND cp.address_id = 1
+            CROSS JOIN avg_efficiency ae
             WHERE cd.delta_kwh IS NOT NULL
             GROUP BY
                 cd.charging_process_id,
@@ -220,7 +234,8 @@ class HistoryStore:
                 cp.end_date,
                 bucket,
                 cp.charge_energy_added,
-                cp.charge_energy_used
+                cp.charge_energy_used,
+                ae.ratio
         )
 
         SELECT
