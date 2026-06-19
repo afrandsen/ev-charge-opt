@@ -210,10 +210,7 @@ class HistoryStore:
             SELECT
                 cd.charging_process_id,
                 cp.start_date,
-                COALESCE(
-                    cp.end_date,
-                    MAX(cd.date) OVER (PARTITION BY cd.charging_process_id)
-                ) AS end_date,
+                cp.end_date,
                 date_trunc('hour', cd.date)
                     + floor(extract(minute FROM cd.date) / 15) * interval '15 minutes' AS bucket,
 
@@ -244,7 +241,7 @@ class HistoryStore:
         SELECT
             cb.charging_process_id,
             cb.start_date,
-            max(cb.end_date) AS end_date,
+            coalesce(max(cb.end_date), max(cb.bucket) + interval '15 minutes') AS end_date,
 
             round(sum(cb.charge_kwh)::numeric, 4) AS charged_kwh,
 
@@ -254,7 +251,10 @@ class HistoryStore:
                     * greatest(
                         extract(
                             epoch FROM (
-                                least(cb.end_date, cb.bucket + interval '15 minutes')
+                                least(
+                                    coalesce(cb.end_date, cb.bucket + interval '15 minutes'),
+                                    cb.bucket + interval '15 minutes'
+                                )
                                 - greatest(cb.start_date, cb.bucket)
                             )
                         ) / 900.0,
@@ -272,7 +272,10 @@ class HistoryStore:
                             * greatest(
                                 extract(
                                     epoch FROM (
-                                        least(cb.end_date, cb.bucket + interval '15 minutes')
+                                        least(
+                                            coalesce(cb.end_date, cb.bucket + interval '15 minutes'),
+                                            cb.bucket + interval '15 minutes'
+                                        )
                                         - greatest(cb.start_date, cb.bucket)
                                     )
                                 ) / 900.0,
@@ -293,7 +296,10 @@ class HistoryStore:
                             * greatest(
                                 extract(
                                     epoch FROM (
-                                        least(cb.end_date, cb.bucket + interval '15 minutes')
+                                        least(
+                                            coalesce(cb.end_date, cb.bucket + interval '15 minutes'),
+                                            cb.bucket + interval '15 minutes'
+                                        )
                                         - greatest(cb.start_date, cb.bucket)
                                     )
                                 ) / 900.0,
@@ -315,7 +321,10 @@ class HistoryStore:
                                 * greatest(
                                     extract(
                                         epoch FROM (
-                                            least(cb.end_date, cb.bucket + interval '15 minutes')
+                                            least(
+                                                coalesce(cb.end_date, cb.bucket + interval '15 minutes'),
+                                                cb.bucket + interval '15 minutes'
+                                            )
                                             - greatest(cb.start_date, cb.bucket)
                                         )
                                     ) / 900.0,
