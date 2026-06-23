@@ -205,6 +205,15 @@ def optimize_ev_charging(
     soc_max = cfg["battery_kwh"] * cfg["soc_max_pct"]
     soc0 = cfg["battery_kwh"] * runtime["initial_soc_pct"]
     flat_adders = cfg["systemtarif"] + cfg["nettarif_tso"] + cfg["elafgift"] + cfg["tillaeg"]
+    weekday_order = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
 
     df = pd.DataFrame({"datetime_utc": prices["date"]})
     df["price_source"] = prices["source"].values if "source" in prices.columns else "unknown"
@@ -250,6 +259,13 @@ def optimize_ev_charging(
         if col in trips.columns:
             trips[col] = trips[col].apply(_parse_trip_time)
 
+    def _slot_index(day_label: str, minutes_of_day: int):
+        matches = np.where(
+            (df["wday_label"].values == day_label)
+            & ((df["hour_local"].values * 60 + df["minute_local"].values) == minutes_of_day)
+        )[0]
+        return int(matches[0]) if len(matches) else None
+
     available = np.ones(horizon, dtype=int)
     for _, t in trips.iterrows():
         if pd.isna(t["away_start"]) or pd.isna(t["away_end"]):
@@ -285,6 +301,7 @@ def optimize_ev_charging(
     sc_energy_vec = np.zeros(horizon)
     trip_departures = []
     trip_requirements = []
+    trip_events = []
 
     for _, t in trips.iterrows():
         if "distance_km" not in t:
@@ -307,15 +324,41 @@ def optimize_ev_charging(
         trip_departures.append((h_dep, max(0.0, need_kwh)))
         trip_requirements.append((h_dep, need_kwh, t["day"], t["away_start"]))
 
+        h_end = h_dep
+        if pd.notna(t.get("away_end")):
+            end_minutes = int(t["away_end"].hour * 60 + t["away_end"].minute)
+            end_day = str(t["day"]).lower()
+            if end_minutes < dep_minutes:
+                end_day = [day for day, idx in weekday_order.items() if idx == ((weekday_order[end_day] + 1) % 7)][0]
+            end_idx = _slot_index(end_day, end_minutes)
+            if end_idx is not None:
+                h_end = end_idx
+
         if "supercharge_kwh" in t and pd.notna(t["supercharge_kwh"]):
             sc_energy_vec[h_dep] += float(t["supercharge_kwh"])
 
-        if "max_soc_pct" in t and pd.notna(t["max_soc_pct"]):
-            trip_max = cfg["battery_kwh"] * float(t["max_soc_pct"])
-            existing_trip_caps = trip_soc_max_vec[: h_dep + 1]
-            trip_soc_max_vec[: h_dep + 1] = np.where(
-                np.isnan(existing_trip_caps), trip_max, np.minimum(existing_trip_caps, trip_max)
+        trip_events.append(
+            {
+                "h_dep": h_dep,
+                "h_end": h_end,
+                "trip_max_kwh": cfg["battery_kwh"] * float(t["max_soc_pct"])
+                if "max_soc_pct" in t and pd.notna(t["max_soc_pct"])
+                else None,
+            }
+        )
+
+    trip_events.sort(key=lambda item: item["h_dep"])
+
+    last_trip_end_idx = 0
+    for event in trip_events:
+        trip_max_kwh = event["trip_max_kwh"]
+        if trip_max_kwh is not None:
+            existing_trip_caps = trip_soc_max_vec[last_trip_end_idx : event["h_dep"] + 1]
+            trip_soc_max_vec[last_trip_end_idx : event["h_dep"] + 1] = np.where(
+                np.isnan(existing_trip_caps), trip_max_kwh, np.minimum(existing_trip_caps, trip_max_kwh)
             )
+
+        last_trip_end_idx = max(last_trip_end_idx, event["h_end"])
 
     hard_soc_max_vec = np.where(np.isnan(trip_soc_max_vec), hard_soc_max_vec, trip_soc_max_vec)
 
