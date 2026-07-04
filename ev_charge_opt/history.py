@@ -217,7 +217,10 @@ class HistoryStore:
                 sum(cd.delta_kwh)
                     * (
                         COALESCE(
-                            cp.charge_energy_used::numeric / NULLIF(cp.charge_energy_added, 0),
+                            NULLIF(
+                                cp.charge_energy_used::numeric / NULLIF(cp.charge_energy_added, 0),
+                                0
+                            ),
                             ae.ratio
                         )
                     ) AS charge_kwh
