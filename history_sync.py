@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 from ev_charge_opt.history import (
     HistoryStore,
-    expand_hourly_total_prices_to_quarters,
     fetch_solax_current_quarter_kwh,
     prepare_total_prices_hourly,
 )
@@ -43,8 +42,8 @@ def main() -> int:
         elafgift=app_cfg.elafgift,
         tillaeg=app_cfg.tillaeg,
     )
-    quarter_total = expand_hourly_total_prices_to_quarters(hourly_total, app_cfg.tz)
-    store.save_total_price_15m(quarter_total)
+    direct_15m = hourly_total.rename(columns={"date": "slot_local", "spot_kr_per_kwh": "spot_price_kr_per_kwh"})
+    store.save_total_price_15m(direct_15m)
 
     solax = fetch_solax_current_quarter_kwh(
         token_id=env["token_id"],

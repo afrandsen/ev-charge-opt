@@ -10,7 +10,6 @@ from pandas.api.types import is_datetime64_any_dtype
 
 from ev_charge_opt.history import (
     HistoryStore,
-    expand_hourly_total_prices_to_quarters,
     fetch_solax_current_quarter_kwh,
     prepare_total_prices_hourly,
 )
@@ -181,8 +180,8 @@ def _persist_price_history(prices: pd.DataFrame, cfg: dict, store: HistoryStore)
         elafgift=cfg["elafgift"],
         tillaeg=cfg["tillaeg"],
     )
-    quarter_total = expand_hourly_total_prices_to_quarters(hourly_total, cfg["tz"])
-    store.save_total_price_15m(quarter_total)
+    direct_15m = hourly_total.rename(columns={"date": "slot_local", "spot_kr_per_kwh": "spot_price_kr_per_kwh"})
+    store.save_total_price_15m(direct_15m)
 
 
 def optimize_ev_charging(

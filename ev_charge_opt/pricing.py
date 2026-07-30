@@ -5,6 +5,22 @@ import pandas as pd
 import requests
 
 
+def _validate_quarter_grid(df: pd.DataFrame, source: str) -> None:
+    if df.empty:
+        return
+
+    ts = pd.to_datetime(df["date"], utc=True)
+    bad_minute = ~ts.dt.minute.isin([0, 15, 30, 45])
+    if bad_minute.any():
+        bad = ts.loc[bad_minute].iloc[0]
+        raise RuntimeError(f"{source} returned non-15m timestamp: {bad}")
+
+    dupes = ts.duplicated()
+    if dupes.any():
+        dup = ts.loc[dupes].iloc[0]
+        raise RuntimeError(f"{source} returned duplicate timestamp: {dup}")
+
+
 def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
     today = datetime.now().date()
     now_cet = pd.Timestamp.now(tz=tz)
@@ -23,7 +39,7 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
         rows = None
         for attempt in range(attempts):
             try:
-                data = p.hourly(end_date=date_str, areas=["DK1"])
+                data = p.hourly(end_date=date_str, areas=["DK1"], resolution=15)
                 values = data["areas"]["DK1"]["values"]
                 rows = [
                     {
@@ -37,6 +53,11 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
                 log(f"✅ Nordpool success for {date_str} on attempt {attempt+1}")
                 break
             except Exception as e:
+                if "resolution" in str(e).lower():
+                    raise RuntimeError(
+                        "Nordpool client does not support 15-minute resolution. "
+                        "Upgrade the nordpool package version."
+                    ) from e
                 log(f"Nordpool fetch failed {date_str} (attempt {attempt+1}/{attempts}): {e}")
                 time.sleep(2)
         if rows is not None:
@@ -48,7 +69,9 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
         raise RuntimeError("No Nordpool data available")
 
     df = pd.concat(dfs, ignore_index=True)
-    return df.sort_values("date").reset_index(drop=True)
+    df = df.sort_values("date").reset_index(drop=True)
+    _validate_quarter_grid(df, source="Nordpool")
+    return df
 
 
 def fetch_eur_dkk_exchange_rate(log, attempts: int = 5, sleep_sec: int = 1) -> float:
@@ -82,7 +105,7 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
         "region": "DK1",
         "evaluation": False,
         "unit": "EUR_PER_MWH",
-        "hourly": True,
+        "hourly": False,
         "timezone": "Europe/Copenhagen",
     }
 
@@ -96,7 +119,8 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
             df_epex_temp["price"] = (df_epex_temp["total"] / 10) * exchange_rate * 1.25
             df_epex_temp["source"] = "EPEX"
             df_epex = df_epex_temp[["date", "price", "source"]]
-            log(f"✅ EPEX forecast success ({len(df_epex)} hours) on attempt {attempt}")
+            _validate_quarter_grid(df_epex, source="EPEX")
+            log(f"✅ EPEX forecast success ({len(df_epex)} slots) on attempt {attempt}")
             break
         except Exception as e:
             log(f"⚠️ EPEX forecast fetch failed (attempt {attempt}/{attempts}): {e}")
@@ -114,4 +138,5 @@ def combine_actuals_and_forecast(prices_actual: pd.DataFrame, prices_forecast: p
     df = pd.concat([prices_actual, future], ignore_index=True).sort_values("date").reset_index(drop=True)
     now = pd.Timestamp.now(tz="UTC").floor("15min") - timedelta(hours=2)
     df = df[df["date"] >= now]
+    _validate_quarter_grid(df, source="Combined price timeline")
     return df.reset_index(drop=True)
