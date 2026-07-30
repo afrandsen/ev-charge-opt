@@ -22,7 +22,7 @@ if [ "$#" -eq 4 ]; then
     echo "🛠️ Manual mode enabled (TeslaMate bypassed)"
 else
     # Check if car is within 2000 m of home
-    IS_HOME=$(docker exec -database-1 \
+    IS_HOME=$(docker exec akf-database-1 \
               psql -U teslamate teslamate -t -c \
               "SELECT (earth_distance(ll_to_earth(latitude, longitude), ll_to_earth(${LAT}, ${LON})) <= 2000) AS is_home FROM positions WHERE car_id = 1 ORDER BY date DESC LIMIT 1;" | xargs)
 
@@ -33,18 +33,18 @@ else
     fi
 
     # Fetch the latest SOC from TeslaMate database inside Docker
-    SOC=$(docker exec -database-1 \
+    SOC=$(docker exec akf-database-1 \
           psql -U teslamate teslamate -t -c \
           "SELECT battery_level FROM positions ORDER BY date DESC LIMIT 1;" | xargs)
 
     # Fetch charging efficiency from TeslaMate database inside Docker
-    CHARGE_EFF=$(docker exec -database-1 \
+    CHARGE_EFF=$(docker exec akf-database-1 \
                  psql -U teslamate teslamate -t -c \
                  "SELECT SUM(charge_energy_added) / SUM(GREATEST(charge_energy_added, charge_energy_used)) \
                  AS charging_efficiency_percent FROM charging_processes WHERE car_id = 1 AND charge_energy_added > 0.01 LIMIT 1;" | xargs)
 
     # Fetch efficiency from TeslaMate database inside Docker
-    EFF_KWH_PER_KM=$(docker exec -database-1 \
+    EFF_KWH_PER_KM=$(docker exec akf-database-1 \
                      psql -U teslamate teslamate -t -c \
                      "SELECT AVG((start_rated_range_km - end_rated_range_km) * car.efficiency / NULLIF(distance,0)) AS wh_per_km_last10_avg
                      FROM (
