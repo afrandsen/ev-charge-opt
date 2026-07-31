@@ -33,7 +33,7 @@ def main() -> int:
 
     store.ensure_history_tables()
 
-    prices_actual = fetch_dk1_prices_dkk(app_cfg.tz, log)
+    prices_actual = fetch_dk1_prices_dkk(app_cfg.tz, log, resolution_minutes=env["price_resolution_minutes"])
     prices_15m_total = prepare_total_prices_15m(
         prices_15m=prices_actual,
         tz=app_cfg.tz,

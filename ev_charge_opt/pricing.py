@@ -5,7 +5,37 @@ import pandas as pd
 import requests
 
 
-def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
+def _expand_hourly_prices_to_15m(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    base = df[["date", "price", "source"]].copy()
+    base["date"] = pd.to_datetime(base["date"], utc=True)
+
+    repeated = base.loc[base.index.repeat(4)].copy().reset_index(drop=True)
+    repeated["date"] = repeated["date"] + pd.to_timedelta(
+        [offset for _ in range(len(base)) for offset in (0, 15, 30, 45)],
+        unit="m",
+    )
+    return repeated
+
+
+def _normalize_prices_to_15m(df: pd.DataFrame, resolution_minutes: int) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    if resolution_minutes == 60:
+        df = _expand_hourly_prices_to_15m(df)
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], utc=True).dt.floor("15min")
+    return df.sort_values("date").drop_duplicates(subset=["date", "source"], keep="last").reset_index(drop=True)
+
+
+def fetch_dk1_prices_dkk(tz: str, log, resolution_minutes: int = 15, attempts: int = 5) -> pd.DataFrame:
+    if resolution_minutes not in (15, 60):
+        raise ValueError(f"Unsupported PRICE_RESOLUTION_MINUTES={resolution_minutes}. Use 15 or 60.")
+
     today = datetime.now().date()
     now_cet = pd.Timestamp.now(tz=tz)
     fetch_tomorrow = now_cet.hour > 12 or (now_cet.hour == 12 and now_cet.minute >= 45)
@@ -24,7 +54,7 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
         rows = None
         for attempt in range(attempts):
             try:
-                data = p.fetch(end_date=target_date, areas=["DK1"], resolution=15)
+                data = p.fetch(end_date=target_date, areas=["DK1"], resolution=resolution_minutes)
                 values = data["areas"]["DK1"]["values"]
                 rows = [
                     {
@@ -49,7 +79,9 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
         raise RuntimeError("No Nordpool data available")
 
     df = pd.concat(dfs, ignore_index=True)
-    return df.sort_values("date").reset_index(drop=True)
+    df = _normalize_prices_to_15m(df, resolution_minutes)
+    log(f"ℹ️ Nordpool requested at {resolution_minutes}-minute resolution, using {len(df)} 15-min slots internally")
+    return df
 
 
 def fetch_eur_dkk_exchange_rate(log, attempts: int = 5, sleep_sec: int = 1) -> float:
@@ -71,7 +103,10 @@ def fetch_eur_dkk_exchange_rate(log, attempts: int = 5, sleep_sec: int = 1) -> f
     return 7.47
 
 
-def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.DataFrame:
+def fetch_epex_forecast_dkk(log, resolution_minutes: int = 15, attempts: int = 5, sleep_sec: int = 2) -> pd.DataFrame:
+    if resolution_minutes not in (15, 60):
+        raise ValueError(f"Unsupported PRICE_RESOLUTION_MINUTES={resolution_minutes}. Use 15 or 60.")
+
     df_epex = pd.DataFrame(columns=["date", "price", "source"])
     exchange_rate = fetch_eur_dkk_exchange_rate(log)
 
@@ -83,7 +118,7 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
         "region": "DK1",
         "evaluation": False,
         "unit": "EUR_PER_MWH",
-        "hourly": False,
+        "hourly": resolution_minutes == 60,
         "timezone": "Europe/Copenhagen",
     }
 
@@ -97,7 +132,11 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
             df_epex_temp["price"] = (df_epex_temp["total"] / 10) * exchange_rate * 1.25
             df_epex_temp["source"] = "EPEX"
             df_epex = df_epex_temp[["date", "price", "source"]]
-            log(f"✅ EPEX forecast success ({len(df_epex)} 15-min slots) on attempt {attempt}")
+            df_epex = _normalize_prices_to_15m(df_epex, resolution_minutes)
+            log(
+                f"✅ EPEX forecast success ({len(df_epex)} 15-min slots) on attempt {attempt} "
+                f"[requested {resolution_minutes}-minute resolution]"
+            )
             break
         except Exception as e:
             log(f"⚠️ EPEX forecast fetch failed (attempt {attempt}/{attempts}): {e}")

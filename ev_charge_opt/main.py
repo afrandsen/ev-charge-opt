@@ -91,8 +91,8 @@ def main(argv=None) -> int:
     )
     store.ensure_history_tables()
 
-    prices_actual = fetch_dk1_prices_dkk(app_cfg.tz, log)
-    prices_forecast = fetch_epex_forecast_dkk(log)
+    prices_actual = fetch_dk1_prices_dkk(app_cfg.tz, log, resolution_minutes=env["price_resolution_minutes"])
+    prices_forecast = fetch_epex_forecast_dkk(log, resolution_minutes=env["price_resolution_minutes"])
     prices = combine_actuals_and_forecast(prices_actual=prices_actual, prices_forecast=prices_forecast)
 
     cfg = {

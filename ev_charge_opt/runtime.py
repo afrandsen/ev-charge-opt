@@ -6,6 +6,20 @@ from dataclasses import dataclass
 import pandas as pd
 
 
+def _parse_price_resolution_minutes(log) -> int:
+    raw = os.getenv("PRICE_RESOLUTION_MINUTES", "15")
+    try:
+        val = int(raw)
+    except ValueError:
+        log(f"⚠️ Invalid PRICE_RESOLUTION_MINUTES={raw!r}. Falling back to 15.")
+        return 15
+
+    if val not in (15, 60):
+        log(f"⚠️ Unsupported PRICE_RESOLUTION_MINUTES={val}. Falling back to 15.")
+        return 15
+    return val
+
+
 @dataclass
 class RuntimeInputs:
     initial_soc_pct: float
@@ -91,6 +105,7 @@ def load_env_inputs(log):
         "tm_db_user": os.getenv("TM_DB_USER", "teslamate"),
         "tm_db_schema": os.getenv("TM_DB_SCHEMA", "history"),
         "tm_db_container": os.getenv("TM_DB_CONTAINER", ""),
+        "price_resolution_minutes": _parse_price_resolution_minutes(log),
     }
 
     trips_json = os.getenv("TRIPS", "[]")

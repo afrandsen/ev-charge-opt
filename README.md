@@ -38,9 +38,20 @@ pip install -r requirements.txt
 
 ### Price Resolution
 
-- Nordpool DK1 actual spot prices are fetched in 15-minute resolution.
-- EPEX DK1 forecasts are fetched in 15-minute resolution (`hourly=false`).
+- Default mode fetches Nordpool DK1 actual spot prices in 15-minute resolution.
+- Default mode fetches EPEX DK1 forecasts in 15-minute resolution (`hourly=false`).
 - Price history persistence is native 15-minute end-to-end (no synthetic hourly x4 expansion).
+
+You can switch data-source resolution with:
+
+- `PRICE_RESOLUTION_MINUTES=15` (default)
+	- Nordpool fetches 15-minute prices.
+	- EPEX fetches `hourly=false`.
+- `PRICE_RESOLUTION_MINUTES=60`
+	- Nordpool fetches hourly prices.
+	- EPEX fetches `hourly=true`.
+
+In both modes, the internal optimizer/history timeline remains 15-minute slots. If `60` is selected, prices are expanded to quarter slots internally.
 
 ### History-Only Flow
 
