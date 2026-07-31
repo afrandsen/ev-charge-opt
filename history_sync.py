@@ -4,9 +4,8 @@ from dotenv import load_dotenv
 
 from ev_charge_opt.history import (
     HistoryStore,
-    expand_hourly_total_prices_to_quarters,
     fetch_solax_current_quarter_kwh,
-    prepare_total_prices_hourly,
+    prepare_total_prices_15m,
 )
 from ev_charge_opt.logging_utils import RunLogger
 from ev_charge_opt.pricing import fetch_dk1_prices_dkk
@@ -35,16 +34,15 @@ def main() -> int:
     store.ensure_history_tables()
 
     prices_actual = fetch_dk1_prices_dkk(app_cfg.tz, log)
-    hourly_total = prepare_total_prices_hourly(
-        prices_hourly=prices_actual,
+    prices_15m_total = prepare_total_prices_15m(
+        prices_15m=prices_actual,
         tz=app_cfg.tz,
         systemtarif=app_cfg.systemtarif,
         nettarif_tso=app_cfg.nettarif_tso,
         elafgift=app_cfg.elafgift,
         tillaeg=app_cfg.tillaeg,
     )
-    quarter_total = expand_hourly_total_prices_to_quarters(hourly_total, app_cfg.tz)
-    store.save_total_price_15m(quarter_total)
+    store.save_total_price_15m(prices_15m_total)
 
     solax = fetch_solax_current_quarter_kwh(
         token_id=env["token_id"],

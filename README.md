@@ -6,7 +6,7 @@ Charge Plan with Global Cost Minimiser
 - `ev_charge_opt/`
 	- `main.py`: main optimizer app entrypoint
 	- `optimizer.py`: optimization model + weather/solar preprocessing
-	- `pricing.py`: Nordpool and forecast data fetch/merge
+	- `pricing.py`: Nordpool actuals + EPEX forecast fetch/merge (native 15-minute slots)
 	- `history.py`: Postgres history persistence + Solax realtime fetch
 	- `runtime.py`: runtime/config parsing and trip window adjustments
 	- `state.py`: persisted charging state for alerting
@@ -35,6 +35,12 @@ pip install -r requirements.txt
 - `./run.sh`
 	- If car is home: runs trip refresh + optimizer (optimizer also persists Solax and spot/total price history).
 	- If car is away: skips optimizer and runs independent history sync.
+
+### Price Resolution
+
+- Nordpool DK1 actual spot prices are fetched in 15-minute resolution.
+- EPEX DK1 forecasts are fetched in 15-minute resolution (`hourly=false`).
+- Price history persistence is native 15-minute end-to-end (no synthetic hourly x4 expansion).
 
 ### History-Only Flow
 

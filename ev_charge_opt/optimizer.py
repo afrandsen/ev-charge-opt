@@ -10,9 +10,8 @@ from pandas.api.types import is_datetime64_any_dtype
 
 from ev_charge_opt.history import (
     HistoryStore,
-    expand_hourly_total_prices_to_quarters,
     fetch_solax_current_quarter_kwh,
-    prepare_total_prices_hourly,
+    prepare_total_prices_15m,
 )
 
 
@@ -173,16 +172,15 @@ def _persist_price_history(prices: pd.DataFrame, cfg: dict, store: HistoryStore)
     if prices_for_history.empty:
         return
 
-    hourly_total = prepare_total_prices_hourly(
-        prices_hourly=prices_for_history,
+    prices_15m_total = prepare_total_prices_15m(
+        prices_15m=prices_for_history,
         tz=cfg["tz"],
         systemtarif=cfg["systemtarif"],
         nettarif_tso=cfg["nettarif_tso"],
         elafgift=cfg["elafgift"],
         tillaeg=cfg["tillaeg"],
     )
-    quarter_total = expand_hourly_total_prices_to_quarters(hourly_total, cfg["tz"])
-    store.save_total_price_15m(quarter_total)
+    store.save_total_price_15m(prices_15m_total)
 
 
 def optimize_ev_charging(
@@ -215,13 +213,14 @@ def optimize_ev_charging(
         "sunday": 6,
     }
 
-    df = pd.DataFrame({"datetime_utc": prices["date"]})
+    df = pd.DataFrame({"datetime_utc": prices["date"], "price": prices["price"]})
     df["price_source"] = prices["source"].values if "source" in prices.columns else "unknown"
-    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"])
+    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"]).dt.floor("15min")
+    df = df.sort_values("datetime_local").drop_duplicates(subset=["datetime_local"], keep="last").reset_index(drop=True)
     df["wday_label"] = df["datetime_local"].dt.day_name().str.lower()
     df["hour_local"] = df["datetime_local"].dt.hour
     df["minute_local"] = df["datetime_local"].dt.minute
-    df["spot_kr_kwh"] = prices["price"] / 100.0
+    df["spot_kr_kwh"] = df["price"] / 100.0
 
     h = df["hour_local"].values
     df_dates = df["datetime_local"].dt.date
@@ -242,14 +241,6 @@ def optimize_ev_charging(
 
     df["total_price_kr_kwh"] = df["spot_kr_kwh"] + flat_adders + dso
 
-    n = len(df)
-    df_q = df.loc[df.index.repeat(4)].copy().reset_index(drop=True)
-    df_q["datetime_local"] = df_q["datetime_local"] + pd.to_timedelta(np.tile([0, 15, 30, 45], n), unit="m")
-    df_q["hour_local"] = df_q["datetime_local"].dt.hour
-    df_q["minute_local"] = df_q["datetime_local"].dt.minute
-    df_q["wday_label"] = df_q["datetime_local"].dt.day_name().str.lower()
-
-    df = df_q
     now = pd.Timestamp.now(tz=cfg["tz"]).floor("15min")
     df = df.loc[df["datetime_local"] >= now].copy().reset_index(drop=True)
     horizon = len(df)

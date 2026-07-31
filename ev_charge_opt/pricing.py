@@ -19,11 +19,12 @@ def fetch_dk1_prices_dkk(tz: str, log, attempts: int = 5) -> pd.DataFrame:
     p = elspot.Prices(currency="DKK")
     dfs = []
     for offset in range(1 + int(fetch_tomorrow)):
-        date_str = (today + timedelta(days=offset)).strftime("%Y-%m-%d")
+        target_date = today + timedelta(days=offset)
+        date_str = target_date.strftime("%Y-%m-%d")
         rows = None
         for attempt in range(attempts):
             try:
-                data = p.hourly(end_date=date_str, areas=["DK1"])
+                data = p.fetch(end_date=target_date, areas=["DK1"], resolution=15)
                 values = data["areas"]["DK1"]["values"]
                 rows = [
                     {
@@ -82,7 +83,7 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
         "region": "DK1",
         "evaluation": False,
         "unit": "EUR_PER_MWH",
-        "hourly": True,
+        "hourly": False,
         "timezone": "Europe/Copenhagen",
     }
 
@@ -96,7 +97,7 @@ def fetch_epex_forecast_dkk(log, attempts: int = 5, sleep_sec: int = 2) -> pd.Da
             df_epex_temp["price"] = (df_epex_temp["total"] / 10) * exchange_rate * 1.25
             df_epex_temp["source"] = "EPEX"
             df_epex = df_epex_temp[["date", "price", "source"]]
-            log(f"✅ EPEX forecast success ({len(df_epex)} hours) on attempt {attempt}")
+            log(f"✅ EPEX forecast success ({len(df_epex)} 15-min slots) on attempt {attempt}")
             break
         except Exception as e:
             log(f"⚠️ EPEX forecast fetch failed (attempt {attempt}/{attempts}): {e}")

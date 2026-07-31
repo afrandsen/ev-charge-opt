@@ -366,21 +366,21 @@ class HistoryStore:
         return self._run_psql(sql)
 
 
-def prepare_total_prices_hourly(
-    prices_hourly: pd.DataFrame,
+def prepare_total_prices_15m(
+    prices_15m: pd.DataFrame,
     tz: str,
     systemtarif: float,
     nettarif_tso: float,
     elafgift: float,
     tillaeg: float,
 ) -> pd.DataFrame:
-    if prices_hourly.empty:
-        return pd.DataFrame(columns=["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"])
+    if prices_15m.empty:
+        return pd.DataFrame(columns=["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"])
 
-    df = prices_hourly[["date", "price"]].copy()
+    df = prices_15m[["date", "price"]].copy()
     df["date"] = pd.to_datetime(df["date"], utc=True)
     df["datetime_local"] = df["date"].dt.tz_convert(tz)
-    df["spot_kr_per_kwh"] = df["price"] / 100.0
+    df["spot_price_kr_per_kwh"] = df["price"] / 100.0
 
     h = df["datetime_local"].dt.hour.values
     df_dates = df["datetime_local"].dt.date
@@ -400,24 +400,9 @@ def prepare_total_prices_hourly(
     dso[mask_new & (h >= 21) & (h < 24)] = 0.105625
 
     flat_adders = systemtarif + nettarif_tso + elafgift + tillaeg
-    df["total_price_kr_per_kwh"] = df["spot_kr_per_kwh"] + dso + flat_adders
-    return df[["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"]]
-
-
-def expand_hourly_total_prices_to_quarters(prices_hourly_total: pd.DataFrame, tz: str) -> pd.DataFrame:
-    if prices_hourly_total.empty:
-        return pd.DataFrame(columns=["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"])
-
-    df = prices_hourly_total[["date", "spot_kr_per_kwh", "total_price_kr_per_kwh"]].copy()
-    df["date"] = pd.to_datetime(df["date"], utc=True)
-
-    repeated = df.loc[df.index.repeat(4)].copy().reset_index(drop=True)
-    repeated["slot_local"] = (
-        repeated["date"].dt.tz_convert(tz)
-        + pd.to_timedelta(np.tile([0, 15, 30, 45], len(df)), unit="m")
-    ).dt.tz_localize(None)
-    repeated.rename(columns={"spot_kr_per_kwh": "spot_price_kr_per_kwh"}, inplace=True)
-    return repeated[["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]]
+    df["total_price_kr_per_kwh"] = df["spot_price_kr_per_kwh"] + dso + flat_adders
+    df["slot_local"] = df["datetime_local"].dt.tz_localize(None)
+    return df[["slot_local", "spot_price_kr_per_kwh", "total_price_kr_per_kwh"]].sort_values("slot_local").reset_index(drop=True)
 
 
 def fetch_solax_current_quarter_kwh(
