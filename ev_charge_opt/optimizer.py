@@ -145,6 +145,45 @@ def _build_solar_series(df: pd.DataFrame, cfg, log):
     return irr_q_vals, temp_q_vals, panel_temp_q, panel_eff_q, solar_energy_q
 
 
+def _build_soft_soc_bounds(
+    horizon: int,
+    cfg: dict,
+    soc_min: float,
+    hard_soc_max_vec: np.ndarray,
+    trip_departures: list,
+    trip_events: list,
+):
+    soft_soc_window_slots = int(round(max(0.0, cfg["soft_soc_window_hours"]) * 4.0))
+    soft_soc_min_window_slots = int(round(max(0.0, cfg["soft_soc_min_window_hours"]) * 4.0))
+
+    soft_extra_cap_vec = np.zeros(horizon)
+    for h_dep, dep_trip_kwh in trip_departures:
+        if dep_trip_kwh <= 0.0 or soft_soc_window_slots <= 0 or h_dep <= 0:
+            continue
+        start_idx = max(0, h_dep - soft_soc_window_slots)
+        soft_extra_cap_vec[start_idx:h_dep] = np.maximum(soft_extra_cap_vec[start_idx:h_dep], dep_trip_kwh)
+
+    soft_soc_abs_kwh = cfg["battery_kwh"] * min(1.0, max(cfg["soc_max_pct"], cfg["soft_soc_abs_max_pct"]))
+    soc_ub_vec = np.minimum(hard_soc_max_vec + soft_extra_cap_vec, soft_soc_abs_kwh)
+    soc_ub_vec = np.maximum(soc_ub_vec, hard_soc_max_vec)
+
+    soft_min_relax_vec = np.zeros(horizon)
+    for event in trip_events:
+        dep_trip_kwh = event["trip_kwh"]
+        h_end = event["h_end"]
+        if dep_trip_kwh <= 0.0 or soft_soc_min_window_slots <= 0:
+            continue
+        start_idx = max(0, h_end)
+        end_idx = min(horizon, h_end + soft_soc_min_window_slots)
+        soft_min_relax_vec[start_idx:end_idx] = np.maximum(soft_min_relax_vec[start_idx:end_idx], dep_trip_kwh)
+
+    soft_soc_abs_min_kwh = cfg["battery_kwh"] * min(cfg["soc_min_pct"], max(0.0, cfg["soft_soc_abs_min_pct"]))
+    soc_lb_vec = np.maximum(soc_min - soft_min_relax_vec, soft_soc_abs_min_kwh)
+    soc_lb_vec = np.minimum(soc_lb_vec, soc_min)
+
+    return soc_lb_vec, soc_ub_vec, soft_min_relax_vec, soft_extra_cap_vec
+
+
 def _parse_trip_time(s):
     if pd.isna(s) or s is None:
         return None
@@ -332,6 +371,7 @@ def optimize_ev_charging(
             {
                 "h_dep": h_dep,
                 "h_end": h_end,
+                "trip_kwh": max(0.0, need_kwh),
                 "trip_max_kwh": cfg["battery_kwh"] * float(t["max_soc_pct"])
                 if "max_soc_pct" in t and pd.notna(t["max_soc_pct"])
                 else None,
@@ -357,30 +397,14 @@ def optimize_ev_charging(
         if soc_min + need_kwh > hard_soc_max_vec[h_dep]:
             raise RuntimeError(f"Trip on {day} {away_start} infeasible (need {need_kwh:.1f} kWh + reserve)")
 
-    soft_soc_window_slots = int(round(max(0.0, cfg["soft_soc_window_hours"]) * 4.0))
-    soft_soc_min_window_slots = int(round(max(0.0, cfg["soft_soc_min_window_hours"]) * 4.0))
-
-    soft_extra_cap_vec = np.zeros(horizon)
-    for h_dep, dep_trip_kwh in trip_departures:
-        if dep_trip_kwh <= 0.0 or soft_soc_window_slots <= 0 or h_dep <= 0:
-            continue
-        start_idx = max(0, h_dep - soft_soc_window_slots)
-        soft_extra_cap_vec[start_idx:h_dep] = np.maximum(soft_extra_cap_vec[start_idx:h_dep], dep_trip_kwh)
-
-    soft_soc_abs_kwh = cfg["battery_kwh"] * min(1.0, max(cfg["soc_max_pct"], cfg["soft_soc_abs_max_pct"]))
-    soc_ub_vec = np.minimum(hard_soc_max_vec + soft_extra_cap_vec, soft_soc_abs_kwh)
-    soc_ub_vec = np.maximum(soc_ub_vec, hard_soc_max_vec)
-
-    soft_min_relax_vec = np.zeros(horizon)
-    for h_dep, dep_trip_kwh in trip_departures:
-        if dep_trip_kwh <= 0.0 or soft_soc_min_window_slots <= 0:
-            continue
-        end_idx = min(horizon, h_dep + soft_soc_min_window_slots + 1)
-        soft_min_relax_vec[h_dep:end_idx] = np.maximum(soft_min_relax_vec[h_dep:end_idx], dep_trip_kwh)
-
-    soft_soc_abs_min_kwh = cfg["battery_kwh"] * min(cfg["soc_min_pct"], max(0.0, cfg["soft_soc_abs_min_pct"]))
-    soc_lb_vec = np.maximum(soc_min - soft_min_relax_vec, soft_soc_abs_min_kwh)
-    soc_lb_vec = np.minimum(soc_lb_vec, soc_min)
+    soc_lb_vec, soc_ub_vec, soft_min_relax_vec, soft_extra_cap_vec = _build_soft_soc_bounds(
+        horizon=horizon,
+        cfg=cfg,
+        soc_min=soc_min,
+        hard_soc_max_vec=hard_soc_max_vec,
+        trip_departures=trip_departures,
+        trip_events=trip_events,
+    )
 
     cap_per_quarter = cfg["charger_kw"] * 0.25
     min_per_quarter = charger_min_kw * 0.25
