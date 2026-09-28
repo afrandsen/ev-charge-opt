@@ -384,20 +384,20 @@ def prepare_total_prices_15m(
 
     h = df["datetime_local"].dt.hour.values
     df_dates = df["datetime_local"].dt.date
-    cutover = pd.Timestamp("2026-04-01").date()
+    cutover = pd.Timestamp("2026-10-01").date()
 
     dso = np.zeros(len(df))
     mask_old = df_dates < cutover
     dso[mask_old & (h >= 0) & (h < 6)] = 0.070375
-    dso[mask_old & (h >= 6) & (h < 17)] = 0.21125
-    dso[mask_old & (h >= 17) & (h < 21)] = 0.63375
-    dso[mask_old & (h >= 21) & (h < 24)] = 0.21125
+    dso[mask_old & (h >= 6) & (h < 17)] = 0.105625
+    dso[mask_old & (h >= 17) & (h < 21)] = 0.274625
+    dso[mask_old & (h >= 21) & (h < 24)] = 0.105625
 
     mask_new = df_dates >= cutover
     dso[mask_new & (h >= 0) & (h < 6)] = 0.070375
-    dso[mask_new & (h >= 6) & (h < 17)] = 0.105625
-    dso[mask_new & (h >= 17) & (h < 21)] = 0.274625
-    dso[mask_new & (h >= 21) & (h < 24)] = 0.105625
+    dso[mask_new & (h >= 6) & (h < 17)] = 0.21125
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.63375
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.21125
 
     flat_adders = systemtarif + nettarif_tso + elafgift + tillaeg
     df["total_price_kr_per_kwh"] = df["spot_price_kr_per_kwh"] + dso + flat_adders
