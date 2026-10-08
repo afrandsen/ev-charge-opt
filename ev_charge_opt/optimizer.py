@@ -263,20 +263,20 @@ def optimize_ev_charging(
 
     h = df["hour_local"].values
     df_dates = df["datetime_local"].dt.date
-    cutover = pd.Timestamp("2026-04-01").date()
-    dso = np.zeros(len(df))
+    cutover = pd.Timestamp("2026-10-01").date()
 
+    dso = np.zeros(len(df))
     mask_old = df_dates < cutover
     dso[mask_old & (h >= 0) & (h < 6)] = 0.070375
-    dso[mask_old & (h >= 6) & (h < 17)] = 0.21125
-    dso[mask_old & (h >= 17) & (h < 21)] = 0.63375
-    dso[mask_old & (h >= 21) & (h < 24)] = 0.21125
+    dso[mask_old & (h >= 6) & (h < 17)] = 0.105625
+    dso[mask_old & (h >= 17) & (h < 21)] = 0.274625
+    dso[mask_old & (h >= 21) & (h < 24)] = 0.105625
 
     mask_new = df_dates >= cutover
     dso[mask_new & (h >= 0) & (h < 6)] = 0.070375
-    dso[mask_new & (h >= 6) & (h < 17)] = 0.105625
-    dso[mask_new & (h >= 17) & (h < 21)] = 0.274625
-    dso[mask_new & (h >= 21) & (h < 24)] = 0.105625
+    dso[mask_new & (h >= 6) & (h < 17)] = 0.21125
+    dso[mask_new & (h >= 17) & (h < 21)] = 0.63375
+    dso[mask_new & (h >= 21) & (h < 24)] = 0.21125
 
     df["total_price_kr_kwh"] = df["spot_kr_kwh"] + flat_adders + dso
 
