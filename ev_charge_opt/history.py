@@ -429,7 +429,7 @@ def fetch_solax_current_quarter_kwh(
             if data.get("success") and "acpower" in data.get("result", {}):
                 ac_power_w = float(data["result"]["acpower"])
                 solar_kwh_now = ac_power_w / 1000.0 * 0.25
-                now_slot = pd.Timestamp.now(tz="UTC").floor("15min").tz_convert(tz)
+                now_slot = pd.Timestamp.now(tz=tz).floor("15min")
                 log(f"✅ Solax realtime success on attempt {attempt}: {solar_kwh_now:.3f} kWh")
                 return now_slot, solar_kwh_now
             raise ValueError("Inverter API returned no data or missing acpower")

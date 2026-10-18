@@ -122,7 +122,7 @@ def shift_active_trip_windows(trips: pd.DataFrame, is_home: bool, tz: str, log) 
     if trips.empty or not is_home:
         return trips
 
-    now_slot = pd.Timestamp.now(tz="UTC").floor("15min").tz_convert(tz)
+    now_slot = pd.Timestamp.now(tz=tz).floor("15min")
     now_minutes = now_slot.hour * 60 + now_slot.minute
     today_wday = now_slot.day_name().lower()
 
