@@ -254,7 +254,8 @@ def optimize_ev_charging(
 
     df = pd.DataFrame({"datetime_utc": prices["date"], "price": prices["price"]})
     df["price_source"] = prices["source"].values if "source" in prices.columns else "unknown"
-    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"]).dt.floor("15min")
+    df["datetime_utc"] = df["datetime_utc"].dt.tz_convert("UTC").dt.floor("15min")
+    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"])
     df = df.sort_values("datetime_local").drop_duplicates(subset=["datetime_local"], keep="last").reset_index(drop=True)
     df["wday_label"] = df["datetime_local"].dt.day_name().str.lower()
     df["hour_local"] = df["datetime_local"].dt.hour
@@ -280,7 +281,7 @@ def optimize_ev_charging(
 
     df["total_price_kr_kwh"] = df["spot_kr_kwh"] + flat_adders + dso
 
-    now = pd.Timestamp.now(tz=cfg["tz"]).floor("15min")
+    now = pd.Timestamp.now(tz="UTC").floor("15min").tz_convert(cfg["tz"])
     df = df.loc[df["datetime_local"] >= now].copy().reset_index(drop=True)
     horizon = len(df)
 

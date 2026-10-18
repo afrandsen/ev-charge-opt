@@ -170,7 +170,7 @@ def main(argv=None) -> int:
         f"Avg cost: {avg_drawn:.2f} kr/kWh drawn, {avg_stored:.2f} kr/kWh stored."
     )
 
-    now_slot = pd.Timestamp.now(tz=app_cfg.tz).floor("15min")
+    now_slot = pd.Timestamp.now(tz="UTC").floor("15min").tz_convert(app_cfg.tz)
     current_row = df_out.iloc[0]
     current_amp = int(current_row["amp"])
 
