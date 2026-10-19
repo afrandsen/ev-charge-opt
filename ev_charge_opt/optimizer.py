@@ -415,6 +415,28 @@ def optimize_ev_charging(
     z = pulp.LpVariable.dicts("z", range(horizon), cat=pulp.LpBinary)
     s = pulp.LpVariable.dicts("start", range(horizon), cat=pulp.LpBinary)
 
+    night_slots = np.where((df["hour_local"].values * 60 + df["minute_local"].values) < 6 * 60 + 45)[0]
+    min_amp = math.ceil(cfg["charger_min_a"])
+    max_amp = math.floor((cfg["charger_kw"] * 1000) / (cfg["charger_volt"] * math.sqrt(cfg["phases"])))
+    night_amp_values = range(min_amp, max_amp + 1)
+    night_amp_choice = pulp.LpVariable.dicts("night_amp", night_amp_values, cat=pulp.LpBinary)
+    if len(night_slots):
+        prob += pulp.lpSum(night_amp_choice[amp] for amp in night_amp_values) == 1
+        night_amp_slot = pulp.LpVariable.dicts(
+            "night_amp_slot", [(h_i, amp) for h_i in night_slots for amp in night_amp_values], cat=pulp.LpBinary
+        )
+        amp_kwh_per_quarter = cfg["charger_volt"] * math.sqrt(cfg["phases"]) * 0.25 / 1000.0
+        for h_i in night_slots:
+            slot_amp_vars = [night_amp_slot[(h_i, amp)] for amp in night_amp_values]
+            prob += pulp.lpSum(slot_amp_vars) == z[h_i]
+            prob += grid[h_i] + solar[h_i] == amp_kwh_per_quarter * pulp.lpSum(
+                amp * night_amp_slot[(h_i, amp)] for amp in night_amp_values
+            )
+            for amp in night_amp_values:
+                prob += night_amp_slot[(h_i, amp)] <= night_amp_choice[amp]
+                prob += night_amp_slot[(h_i, amp)] <= z[h_i]
+                prob += night_amp_slot[(h_i, amp)] >= night_amp_choice[amp] + z[h_i] - 1
+
     first_trip_idx = np.where(trip_energy_vec > 0)[0]
     soc = {}
     for h_i in range(horizon):
