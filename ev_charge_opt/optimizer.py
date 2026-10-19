@@ -419,17 +419,21 @@ def optimize_ev_charging(
     min_amp = math.ceil(cfg["charger_min_a"])
     max_amp = math.floor((cfg["charger_kw"] * 1000) / (cfg["charger_volt"] * math.sqrt(cfg["phases"])))
     if len(night_slots):
-        night_amp = pulp.LpVariable("night_amp", lowBound=min_amp, upBound=max_amp, cat=pulp.LpInteger)
-        night_current = pulp.LpVariable.dicts(
-            "night_current", night_slots, lowBound=0, upBound=max_amp, cat=pulp.LpInteger
-        )
         amp_kwh_per_quarter = cfg["charger_volt"] * math.sqrt(cfg["phases"]) * 0.25 / 1000.0
-        for h_i in night_slots:
-            prob += night_current[h_i] <= max_amp * z[h_i]
-            prob += night_current[h_i] >= min_amp * z[h_i]
-            prob += night_current[h_i] <= night_amp
-            prob += night_current[h_i] >= night_amp - max_amp * (1 - z[h_i])
-            prob += grid[h_i] + solar[h_i] == amp_kwh_per_quarter * night_current[h_i]
+        night_dates = df["datetime_local"].dt.date.values
+        for night_date in pd.unique(night_dates[night_slots]):
+            date_slots = night_slots[night_dates[night_slots] == night_date]
+            night_key = night_date.strftime("%Y%m%d")
+            night_amp = pulp.LpVariable(f"night_amp_{night_key}", lowBound=min_amp, upBound=max_amp, cat=pulp.LpInteger)
+            night_current = pulp.LpVariable.dicts(
+                f"night_current_{night_key}", date_slots, lowBound=0, upBound=max_amp, cat=pulp.LpInteger
+            )
+            for h_i in date_slots:
+                prob += night_current[h_i] <= max_amp * z[h_i]
+                prob += night_current[h_i] >= min_amp * z[h_i]
+                prob += night_current[h_i] <= night_amp
+                prob += night_current[h_i] >= night_amp - max_amp * (1 - z[h_i])
+                prob += grid[h_i] + solar[h_i] == amp_kwh_per_quarter * night_current[h_i]
 
     first_trip_idx = np.where(trip_energy_vec > 0)[0]
     soc = {}
