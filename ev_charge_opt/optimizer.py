@@ -40,7 +40,7 @@ def _fetch_open_meteo_with_retries(url: str, value_path: list, log, attempts: in
 
 
 def _align_to_quarters(times: list, values: list, tz: str, repeat_to_quarters: bool = False) -> pd.Series:
-    ts = pd.to_datetime(times, errors="coerce").tz_localize(tz, nonexistent="NaT", ambiguous="NaT")
+    ts = pd.to_datetime(times, errors="coerce", utc=True)
     arr = np.array(values, dtype=float)
 
     valid_mask = ~ts.isna()
@@ -54,19 +54,20 @@ def _align_to_quarters(times: list, values: list, tz: str, repeat_to_quarters: b
         ts_q = ts
         arr_q = arr
 
-    return pd.Series(arr_q, index=ts_q)
+    return pd.Series(arr_q, index=ts_q.tz_convert(tz))
 
 
 def _build_solar_series(df: pd.DataFrame, cfg, log):
-    start_date = df["datetime_local"].min().strftime("%Y-%m-%d")
-    end_date = df["datetime_local"].max().strftime("%Y-%m-%d")
+    datetime_utc = df["datetime_local"].dt.tz_convert("UTC")
+    start_date = datetime_utc.min().strftime("%Y-%m-%d")
+    end_date = datetime_utc.max().strftime("%Y-%m-%d")
 
     base = "https://api.open-meteo.com/v1/forecast"
     common = (
         f"?latitude={cfg['lat']}&longitude={cfg['lon']}"
         f"&tilt={cfg['tilt']}&azimuth={cfg['azimuth']}"
         f"&start_date={start_date}&end_date={end_date}"
-        "&timezone=Europe/Copenhagen"
+        "&timezone=UTC"
     )
 
     t15, v15 = _fetch_open_meteo_with_retries(
@@ -254,7 +255,8 @@ def optimize_ev_charging(
 
     df = pd.DataFrame({"datetime_utc": prices["date"], "price": prices["price"]})
     df["price_source"] = prices["source"].values if "source" in prices.columns else "unknown"
-    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"]).dt.floor("15min")
+    df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], utc=True).dt.floor("15min")
+    df["datetime_local"] = df["datetime_utc"].dt.tz_convert(cfg["tz"])
     df = df.sort_values("datetime_local").drop_duplicates(subset=["datetime_local"], keep="last").reset_index(drop=True)
     df["wday_label"] = df["datetime_local"].dt.day_name().str.lower()
     df["hour_local"] = df["datetime_local"].dt.hour
@@ -280,7 +282,7 @@ def optimize_ev_charging(
 
     df["total_price_kr_kwh"] = df["spot_kr_kwh"] + flat_adders + dso
 
-    now = pd.Timestamp.now(tz=cfg["tz"]).floor("15min")
+    now = pd.Timestamp.now(tz="UTC").floor("15min").tz_convert(cfg["tz"])
     df = df.loc[df["datetime_local"] >= now].copy().reset_index(drop=True)
     horizon = len(df)
 
