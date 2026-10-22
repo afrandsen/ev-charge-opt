@@ -133,8 +133,6 @@ def fetch_epex_forecast_dkk(log, resolution_minutes: int = 15, attempts: int = 5
             df_epex_temp["source"] = "EPEX"
             df_epex = df_epex_temp[["date", "price", "source"]]
             df_epex = _normalize_prices_to_15m(df_epex, resolution_minutes)
-            cutoff = pd.Timestamp("2026-10-25", tz="Europe/Copenhagen").tz_convert("UTC")
-            df_epex = df_epex.loc[df_epex["date"] < cutoff].reset_index(drop=True)
             log(
                 f"✅ EPEX forecast success ({len(df_epex)} 15-min slots) on attempt {attempt} "
                 f"[requested {resolution_minutes}-minute resolution]"
