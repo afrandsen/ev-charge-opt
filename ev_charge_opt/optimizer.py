@@ -9,16 +9,15 @@ import requests
 from pandas.api.types import is_datetime64_any_dtype
 
 from ev_charge_opt.history import (
-
-def _solar_available_after_standby(solar_energy: np.ndarray) -> np.ndarray:
-    standby_kwh_per_quarter = 200.0 / 1000.0 * 0.25
-    return np.maximum(np.asarray(solar_energy, dtype=float) - standby_kwh_per_quarter, 0.0)
-
-
     HistoryStore,
     fetch_solax_current_quarter_kwh,
     prepare_total_prices_15m,
 )
+
+
+def _solar_available_after_standby(solar_energy: np.ndarray) -> np.ndarray:
+    standby_kwh_per_quarter = 200.0 / 1000.0 * 0.25
+    return np.maximum(np.asarray(solar_energy, dtype=float) - standby_kwh_per_quarter, 0.0)
 
 
 def _fetch_open_meteo_with_retries(url: str, value_path: list, log, attempts: int = 5, sleep_sec: int = 2):
