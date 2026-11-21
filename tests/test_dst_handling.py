@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 
 from ev_charge_opt.history import fetch_solax_current_quarter_kwh
-from ev_charge_opt.optimizer import _align_to_quarters, _build_solar_series, optimize_ev_charging
+from ev_charge_opt.optimizer import (
+    _align_to_quarters,
+    _build_solar_series,
+    _solar_available_after_standby,
+    optimize_ev_charging,
+)
 from ev_charge_opt.runtime import shift_active_trip_windows
 
 
@@ -66,6 +71,10 @@ class DstHandlingTests(unittest.TestCase):
             "charge_eff": 0.9285,
             "eff_kwh_per_km": 0.144,
         }
+
+    def test_solar_standby_is_subtracted_from_each_slot_and_floored_at_zero(self):
+        actual = _solar_available_after_standby(np.array([0.2, 0.05, 0.03, 1.0]))
+        np.testing.assert_allclose(actual, [0.15, 0.0, 0.0, 0.95])
 
     def weather_response(self, mode):
         def fetch(url, value_path, log):

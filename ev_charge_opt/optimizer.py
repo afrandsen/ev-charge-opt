@@ -9,6 +9,12 @@ import requests
 from pandas.api.types import is_datetime64_any_dtype
 
 from ev_charge_opt.history import (
+
+def _solar_available_after_standby(solar_energy: np.ndarray) -> np.ndarray:
+    standby_kwh_per_quarter = 200.0 / 1000.0 * 0.25
+    return np.maximum(np.asarray(solar_energy, dtype=float) - standby_kwh_per_quarter, 0.0)
+
+
     HistoryStore,
     fetch_solax_current_quarter_kwh,
     prepare_total_prices_15m,
@@ -326,6 +332,8 @@ def optimize_ev_charging(
             df.loc[mask, "solar_energy"] = solar_kwh_now
             log(f"✅ Overrode solar_energy at {now_slot}: {old_val:.3f} -> {solar_kwh_now:.3f} kWh (from inverter)")
         store.save_solax_solar_kwh_15m(now_slot, solar_kwh_now)
+
+    df["solar_energy"] = _solar_available_after_standby(df["solar_energy"].values)
 
     hard_soc_max_vec = np.full(horizon, soc_max)
     trip_soc_max_vec = np.full(horizon, np.nan)
